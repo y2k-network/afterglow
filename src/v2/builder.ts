@@ -199,9 +199,9 @@ export function field<TParent, T, R = never, A extends ArgDefs | undefined = und
   };
   // FieldDef is an opaque branded type; we attach the raw payload through a
   // private property so `Node.layer` can read it without exposing internals.
-  const fd = Object.create(null) as FieldDef<unknown, any> & { __raw: typeof raw };
+  const fd = Object.create(null) as object;
   Object.defineProperty(fd, RAW_FIELD_KEY, { value: raw, enumerable: false });
-  return fd;
+  return fd as FieldDef<TParent, R>;
 }
 
 const RAW_FIELD_KEY = Symbol("v2/raw-field");
@@ -446,21 +446,14 @@ const argsToIR = (args: ArgDefs): Record<string, { schema: Schema.Top; descripti
 // ---------------------------------------------------------------------------
 
 /**
- * What's accepted in a Node/Object's `fields:` slot.
+ * What a `fields:` callback may produce per entry.
  *
- * Carries the parent type `T` so resolver functions inside the slot infer
- * `parent: T` via TypeScript's contextual typing — this is the mechanism that
- * eliminates the `parent: any` leak in resolvers. A typo like `(u) => u.idd`
- * is a compile error because `u: User` is contextually inferred from the
- * surrounding slot.
- *
- * Five accepted shapes:
- *   - `Schema.Top`                                — bare pass-through
- *   - `Schema.Top.pipe(GraphQL.resolve(fn))`      — pipe-attached resolver
- *   - `GraphQL.field(type, { resolve, args, ...})` — explicit field config
- *   - `ScalarType<X>` / `SchemaClass<X>` / `ID`   — type-only shorthand
+ * The callback receives a `FieldHelper<T>` (see below). Calls to the helper
+ * always produce `FieldDef<T, R>` — bound to T — so resolver `parent` params
+ * are typed `T` without ever relying on contextual typing through generics.
+ * Bare `Schema.Top` and class-shorthand passthroughs coexist in the same slot.
  */
-type NodeFieldEntry<T> =
+type NodeFieldOutput<T> =
   | FieldDef<T, any>
   | WithResolver<T, Schema.Top>
   | Schema.Top
@@ -469,37 +462,61 @@ type NodeFieldEntry<T> =
   | IDMarker;
 
 /**
- * Mapped-type slot for `Node.layer(T)({ fields: ... })`. Indexed signature
- * (`{ readonly [K: string]: ... }`) instead of `Record<string, ...>` —
- * the indexed form is what propagates contextual typing through `.pipe()`
- * to `GraphQL.resolve(fn)`'s `fn` argument. `Record` does not.
+ * The typed helper passed to a `fields:` callback. Every call binds `parent`
+ * to `T` — so a typo on `parent.somePropTypo` is a compile-time TS2339,
+ * regardless of whether contextual typing happens to flow through nested
+ * generics in object literals (which it does NOT reliably do for free
+ * generic functions producing values inside a `Record<string, ...>` slot).
+ *
+ * This is the same callback-with-typed-helper pattern Effect uses for things
+ * like `Effect.fn` and `Schema.transformOrFail` — the user receives a closure
+ * with the relevant types pre-bound, and writes resolver bodies inside it.
+ *
+ * Two overloads: with options (custom resolver / args / nullability override)
+ * and without (just a type, default property-name passthrough).
  */
-type NodeFields<T> = { readonly [fieldName: string]: NodeFieldEntry<T> };
+export interface FieldHelper<T> {
+  <Type, R = never, A extends ArgDefs | undefined = undefined>(
+    type: SchemaClass<Type> | ScalarType<Type> | IDMarker | Schema.Top,
+    options: FieldOptions<T, Type, A extends ArgDefs ? ArgsShape<A> : {}, R> & { args?: A },
+  ): FieldDef<T, R>;
+  <Type>(
+    type: SchemaClass<Type> | ScalarType<Type> | IDMarker | Schema.Top,
+  ): FieldDef<T, never>;
+}
 
 /**
- * `GraphQL.Node.layer(User)({...})` is curried so TypeScript can infer the
- * parent type `T` for every field's resolver. The first call pins `T`; the
- * second call's `fields:` slot is typed as `Record<string, NodeFieldEntry<T>>`,
- * which contextual-types the `parent` argument of every `field(...)` resolver
- * to `T` — no manual annotations, no `any`.
+ * `GraphQL.Node.layer(User)({...})` is curried so TypeScript can pin the
+ * parent type `T` for every field's resolver. Effect itself uses the same
+ * idiom (`Layer.effect(Tag)(effect)` — `Layer.d.ts:941`).
  *
- * Why curried? TypeScript can't infer two unrelated generics from a single
- * call when one is the constructor's instance type and the other is the
- * resolver's `R` from `Effect.gen`. Effect itself uses the same trick
- * (`Layer.effect(Tag)(effect)` — `Layer.d.ts:941`), so this reads as a familiar
- * idiom rather than a workaround.
+ * The `fields:` slot is a CALLBACK that receives a `FieldHelper<T>`, not a
+ * plain object. Why: TypeScript's contextual typing reliably flows into a
+ * callback parameter, but does NOT flow into free generics of helper
+ * functions producing values inside a record literal. The callback shape is
+ * the only one that survives the full inference path:
+ *
+ *   `Node.layer(User)` pins T=User
+ *   ↓ second call's `fields` slot is typed `(f: FieldHelper<User>) => ...`
+ *   ↓ user writes `(f) => ({ name: f(Schema.String, { resolve: (u) => u.id }) })`
+ *   ↓ each `f(...)` call returns `FieldDef<User, R>` — `u: User` is bound by
+ *     `FieldHelper<User>`, not by ambient contextual typing
+ *
+ * Bare `Schema.Top` (passthrough) and `Schema.Top.pipe(GraphQL.resolve(fn))`
+ * still work in the same slot — the callback returns a `Record<string,
+ * NodeFieldOutput<T>>` and both are valid `NodeFieldOutput<T>` shapes.
  */
 export const Node = {
   layer<T>(cls: SchemaClass<T>) {
     const name = classIdentifier(cls);
-    return <RLoad = never, RViewer = never>(
+    return <RLoad = never, RViewer = never, RFields = never>(
       config: {
-        readonly fields?: NodeFields<T>;
+        readonly fields?: (f: FieldHelper<T>) => Record<string, NodeFieldOutput<T>>;
         readonly load: (id: string) => Effect.Effect<T | null, any, RLoad>;
         readonly viewer?: () => Effect.Effect<T, any, RViewer>;
         readonly description?: string;
       },
-    ): Layer.Layer<never, never, RLoad | RViewer> => {
+    ): Layer.Layer<never, never, RLoad | RViewer | RFields> => {
       const load = (
         id: string,
         ctx: Context.Context<unknown>,
@@ -530,8 +547,15 @@ export const Node = {
       // listening while the Layer's effect runs.
       return Layer.effectDiscard(
         Effect.sync(() => {
+          // Invoke the user's `fields:` callback with the parent-bound `field`
+          // helper. The helper IS the same `field()` exported below — its
+          // signature is generic over TParent, but inside the callback the
+          // `FieldHelper<T>` declared above pins TParent=T at every call site.
+          const rawFields = config.fields !== undefined
+            ? config.fields(field as unknown as FieldHelper<T>)
+            : {};
           const fields: Record<string, IRFieldDef> = {};
-          for (const [fname, fdef] of Object.entries(config.fields ?? {})) {
+          for (const [fname, fdef] of Object.entries(rawFields)) {
             fields[fname] = compileFieldEntry(fname, name, fdef);
           }
           // Auto-synthesize `id: ID!` when the user omits it. The Schema.Class

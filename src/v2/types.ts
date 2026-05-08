@@ -107,7 +107,10 @@ export type ArgsShape<A extends ArgDefs | undefined> = A extends ArgDefs
 declare const FieldDefBrand: unique symbol;
 export interface FieldDef<TParent, R> {
   readonly [FieldDefBrand]: true;
-  readonly _phantom?: (parent: TParent, r: R) => void;
+  // TParent invariant (input+output) so cross-class is rejected.
+  // R covariant (output position) so FieldDef<T, never> is assignable to
+  // FieldDef<T, any> — required for union narrowing in NodeFieldOutput<T>.
+  readonly _phantom?: { readonly parent: (p: TParent) => TParent; readonly r: () => R };
 }
 
 /** Internal: each FieldDef carries a payload accessed through this private slot. */

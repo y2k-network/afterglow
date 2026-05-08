@@ -130,13 +130,13 @@ void _withoutConnection;
 // ---------------------------------------------------------------------------
 
 const _typoGuard = Node.layer(HarnessUser)({
-  fields: {
-    id: field(ID, { resolve: (u) => globalId("HarnessUser", u.id) }), // u: HarnessUser
-    badTypo: field(Schema.String, {
+  fields: (f) => ({
+    id: f(ID, { resolve: (u) => globalId("HarnessUser", u.id) }), // u: HarnessUser
+    badTypo: f(Schema.String, {
       // @ts-expect-error — TS2339: Property 'NAME_TYPO_SHOULD_ERROR' does not exist on type 'HarnessUser'
       resolve: (u) => u.NAME_TYPO_SHOULD_ERROR,
     }),
-  },
+  }),
   load: () => Effect.succeed(null),
 });
 void _typoGuard;
@@ -151,14 +151,14 @@ void _typoGuard;
 // ---------------------------------------------------------------------------
 
 const _pipeGuard = Node.layer(HarnessUser)({
-  fields: {
-    name: Schema.String.pipe(resolve((u) => u.id)),  // u: HarnessUser, inferred
+  fields: (_f) => ({
+    name: Schema.String.pipe(resolve((u) => u.id)),  // u: HarnessUser, inferred via pipe
     bare: Schema.String,                              // pass-through
     bad: Schema.String.pipe(resolve((u) =>
       // @ts-expect-error — TS2339: Property 'EMAIL_TYPO' does not exist on type 'HarnessUser'
       u.EMAIL_TYPO
     )),
-  },
+  }),
   load: () => Effect.succeed(null),
 });
 void _pipeGuard;
@@ -195,10 +195,10 @@ const TodoStoreLive = Layer.effect(TodoStoreT)(
 test("smoke: build schema and run a query", async () => {
   // id: ID! auto-synthesized — no field(ID, ...) needed
   const TodoNode = Node.layer(TodoT)({
-    fields: {
+    fields: (f) => ({
       title: Schema.String,
       completed: Schema.Boolean,
-    },
+    }),
     load: (id) =>
       Effect.gen(function* () {
         const store = yield* TodoStoreT;
@@ -239,9 +239,9 @@ test("smoke: build schema and run a query", async () => {
 
 test("smoke: node(id) returns the loaded entity", async () => {
   const TodoNode = Node.layer(TodoT)({
-    fields: {
+    fields: (f) => ({
       title: Schema.String,
-    },
+    }),
     load: (id) =>
       Effect.gen(function* () {
         const store = yield* TodoStoreT;
@@ -276,9 +276,9 @@ test("smoke: Connection auto-registers; no Connection.layer() call needed", asyn
   // the TodoTConnection and TodoTEdge types as a side effect of being referenced.
   // id: ID! is also NOT declared — Node.layer auto-synthesizes it from TodoT.id.
   const TodoNode = Node.layer(TodoT)({
-    fields: {
+    fields: (f) => ({
       title: Schema.String,
-    },
+    }),
     load: (id) =>
       Effect.gen(function* () {
         const store = yield* TodoStoreT;
@@ -329,9 +329,9 @@ test("smoke: mutation with input + deletedId helper", async () => {
   }) {}
 
   const TodoNode = Node.layer(TodoT)({
-    fields: {
+    fields: (f) => ({
       title: Schema.String,
-    },
+    }),
     load: (id) =>
       Effect.gen(function* () {
         const store = yield* TodoStoreT;
@@ -386,9 +386,9 @@ test("smoke: custom scalar via GraphQL.Scalar", async () => {
   }) {}
 
   const EventNode = Node.layer(Event)({
-    fields: {
-      at: field(DateScalar),
-    },
+    fields: (f) => ({
+      at: f(DateScalar),
+    }),
     load: () => Effect.succeed(null),
   });
 
@@ -437,12 +437,12 @@ test("smoke: pipe-resolver shorthand executes at runtime", async () => {
   }) {}
 
   const PersonNode = Node.layer(Person)({
-    fields: {
+    fields: (f) => ({
       // pipe form: parent type flows from Node.layer(Person)
       fullName: Schema.String.pipe(resolve((p) => `${p.firstName} ${p.lastName}`)),
       // bare passthrough
       firstName: Schema.String,
-    },
+    }),
     load: (_id) => Effect.succeed(new Person({ firstName: "Ada", lastName: "Lovelace" })),
   });
 
@@ -472,7 +472,7 @@ test("smoke: missing-fragment error message names the type and the fix", () => {
   class Item extends Schema.Class<Item>("Item")({ id: Schema.String }) {}
 
   const ItemNode = Node.layer(Item)({
-    fields: { id: field(ID, { resolve: (i) => globalId("Item", i.id) }) },
+    fields: (f) => ({ id: f(ID, { resolve: (i) => globalId("Item", i.id) }) }),
     load: () => Effect.succeed(null),
   });
 
@@ -485,10 +485,10 @@ test("smoke: missing-fragment error message names the type and the fix", () => {
   // Don't register Ghost. Reference it from a field type in Item to trigger
   // the missing-type error.
   const BadNode = Node.layer(Item)({
-    fields: {
-      id: field(ID, { resolve: (i) => globalId("Item", i.id) }),
-      ghost: field(Ghost, { resolve: () => null }),
-    },
+    fields: (f) => ({
+      id: f(ID, { resolve: (i) => globalId("Item", i.id) }),
+      ghost: f(Ghost, { resolve: () => null }),
+    }),
     load: () => Effect.succeed(null),
   });
   void ItemNode;
@@ -541,10 +541,10 @@ test("smoke: full integration — viewer + connection + mutation with per-reques
 
   // id: ID! auto-synthesized; Connection.layer(TodoT) not needed — auto-registered
   const TodoNode = Node.layer(TodoT)({
-    fields: {
+    fields: (f) => ({
       title: Schema.String,
       completed: Schema.Boolean,
-    },
+    }),
     load: (id) =>
       Effect.gen(function* () {
         const store = yield* TodoStoreV2;
