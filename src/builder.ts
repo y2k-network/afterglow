@@ -612,61 +612,61 @@ export const Node = {
 };
 
 // ---------------------------------------------------------------------------
-// Viewer.layer — framework-owned `type Viewer implements Node` synthesis.
+// Viewer.layer — framework-owned `type Viewer { ...userFields }` synthesis.
 //
 // Mirrors `HttpApi.make(...)` in Effect's `effect/unstable/httpapi`: the
 // container shape (`type Viewer`, `Query.viewer`) belongs to the framework;
-// users compose session-scoped fields and an identity resolver into it.
+// users compose the parent shape and session-scoped fields into it.
 //
-// `resolve` returns the viewer's identity `{ id }` — NOT a user-domain
-// Schema.Class instance. The framework synthesizes `id: ID!` and encodes
-// `parent.id` as `encodeGlobalId("Viewer", parent.id)` at lower-time.
+// Viewer is intentionally NOT a Node implementor and there is NO auto-id.
+// Relay's `@refetchable` on viewer fragments re-calls `Query.viewer`, never
+// `node(id:)` — verified against Relay's `viewer_query_generator.rs`,
+// compiler error messages, and Relay's own test schema (`type Viewer { ... }`
+// with no `implements Node`). Domain ids live on `viewer.user`,
+// `viewer.todos`, etc.
 //
-// No `load:` slot — Relay's `@refetchable` on viewer re-calls `Query.viewer`,
-// not `node(id:)`. Removing `load:` matches the actual Relay model.
+// `resolve` returns ANY plain object — typically `{ userId, ... }` or
+// whatever shape the user wants. Its return type flows into every field
+// resolver's `parent` parameter via the `FieldHelper<TParent>` callback
+// (same contextual-typing pattern as `Node.layer`). No constraint on the
+// return type, so users keep their session model exactly as they want it.
 //
 // Single-instance: a second `Viewer.layer` registration in a `Layer.mergeAll`
 // throws at schema-build time with a clear message.
 // ---------------------------------------------------------------------------
 
 export const Viewer = {
-  layer<RFields = never, RResolve = never>(
+  layer<TParent, RResolve = never, RFields = never>(
     config: {
-      readonly fields?: (f: FieldHelper<{ id: string }>) => Record<string, NodeFieldOutput<{ id: string }>>;
-      readonly resolve: () => Effect.Effect<{ id: string }, any, RResolve>;
+      readonly fields?: (f: FieldHelper<TParent>) => Record<string, NodeFieldOutput<TParent>>;
+      readonly resolve: () => Effect.Effect<TParent, any, RResolve>;
       readonly description?: string;
     },
   ): Layer.Layer<never, never, RFields | RResolve> {
-    const resolveIdentity = (
+    const resolveParent = (
       ctx: Context.Context<unknown>,
-    ): Effect.Effect<{ id: string }, unknown, unknown> => {
+    ): Effect.Effect<unknown, unknown, unknown> => {
       try {
         const eff = config.resolve();
-        return Effect.provide(eff, ctx) as Effect.Effect<{ id: string }, unknown, unknown>;
+        return Effect.provide(eff, ctx) as Effect.Effect<unknown, unknown, unknown>;
       } catch (err) {
-        return Effect.die(err) as Effect.Effect<{ id: string }, unknown, unknown>;
+        return Effect.die(err);
       }
     };
 
     return Layer.effectDiscard(
       Effect.sync(() => {
         const rawFields = config.fields !== undefined
-          ? config.fields(field as unknown as FieldHelper<{ id: string }>)
+          ? config.fields(field as unknown as FieldHelper<TParent>)
           : {};
         const fields: Record<string, IRFieldDef> = {};
         for (const [fname, fdef] of Object.entries(rawFields)) {
-          if (fname === "id") {
-            // Reserved — the framework synthesizes id from the identity.
-            throw new Error(
-              "effect-graphql: GraphQL.Viewer.layer cannot define an `id` field — id is auto-synthesized from the identity returned by `resolve`.",
-            );
-          }
           fields[fname] = compileFieldEntry(fname, "Viewer", fdef);
         }
         const fragment: IRViewerFragment = {
           kind: "viewer",
           fields,
-          resolve: resolveIdentity,
+          resolve: resolveParent,
         };
         recordFragment(fragment);
       }),

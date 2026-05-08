@@ -52,7 +52,6 @@ import {
   buildNodesQueryField,
   buildPageInfoType,
   connectionArgs,
-  encodeGlobalId,
 } from "./relay.ts";
 import { schemaToInputType, schemaToScalar } from "./schema-bridge.ts";
 import { standardScalarTypes } from "./standard-scalars.ts";
@@ -115,10 +114,7 @@ export function lower<R, ReqR = unknown>(
     registry.set(frag.name, scalar);
   }
 
-  // Node interface is required for both `node(id:)` queries and so the
-  // synthesized `Viewer` can `implements Node` (enabling `@refetchable` to
-  // re-query `Query.viewer`).
-  const nodeInterface: GraphQLInterfaceType | null = (hasNodes || hasViewer)
+  const nodeInterface: GraphQLInterfaceType | null = hasNodes
     ? buildNodeInterface((obj) => {
         if (typeof obj === "object" && obj !== null) {
           const tn = (obj as { __typename?: unknown }).__typename;
@@ -151,29 +147,15 @@ export function lower<R, ReqR = unknown>(
     registry.set(name, obj);
   }
 
-  // Synthesize the framework-owned `Viewer` type when registered. Implements
-  // Node so Relay's `@refetchable` can re-query `Query.viewer`. The `id`
-  // field is auto-synthesized: it encodes the identity returned by
-  // `Viewer.layer`'s `resolve` as `encodeGlobalId("Viewer", parent.id)`.
+  // Synthesize the framework-owned `Viewer` type when registered. Plain
+  // object type — NOT a Node implementor and NO auto-id. Relay's
+  // `@refetchable` on viewer fragments re-calls `Query.viewer`, never
+  // `node(id:)`, so Viewer doesn't need a global id; domain ids live on
+  // `viewer.user`, `viewer.todos`, etc.
   if (ir.viewer !== null) {
-    const viewerFields: Record<string, IRFieldDef> = { ...ir.viewer.fields };
-    if (!("id" in viewerFields)) {
-      viewerFields["id"] = {
-        type: { kind: "scalar", name: "ID" },
-        nonNull: true,
-        args: {},
-        resolve: (parent, _args, _ctx, _info) => {
-          const rawId =
-            typeof parent === "object" && parent !== null
-              ? String((parent as Record<string, unknown>)["id"] ?? "")
-              : "";
-          return Effect.succeed(encodeGlobalId("Viewer", rawId));
-        },
-      };
-    }
+    const viewerFields = ir.viewer.fields;
     const viewerObj = new GraphQLObjectType({
       name: "Viewer",
-      interfaces: () => (nodeInterface ? [nodeInterface] : []),
       fields: () => buildObjectFields("Viewer", viewerFields, registry, runtime),
     });
     registry.set("Viewer", viewerObj);
@@ -243,21 +225,16 @@ export function lower<R, ReqR = unknown>(
   }
 
   // Framework-owned Viewer: when `GraphQL.Viewer.layer({...})` was registered,
-  // wire `Query.viewer: Viewer` with the supplied identity resolver. The
-  // synthesized `type Viewer` was added to the registry above. We tag the
-  // resolved value with `__typename: "Viewer"` so the Node interface's
-  // resolveType (a typename sniff) always picks Viewer cleanly.
+  // wire `Query.viewer: Viewer` with the supplied parent resolver. The
+  // resolver returns whatever opaque parent shape the user defined; field
+  // resolvers under Viewer get that exact shape as their `parent` argument.
   if (ir.viewer !== null) {
     const userResolve = ir.viewer.resolve;
     const viewerCfg: IRFieldDef = {
       type: { kind: "named", name: "Viewer" },
       nonNull: false,
       args: {},
-      resolve: (_parent, _args, ctx, _info) =>
-        Effect.map(userResolve(ctx), (identity) => ({
-          ...identity,
-          __typename: "Viewer",
-        })),
+      resolve: (_parent, _args, ctx, _info) => userResolve(ctx),
     };
     queryFieldMap["viewer"] = buildFieldConfig<R, ReqR>(viewerCfg, registry, runtime);
   }

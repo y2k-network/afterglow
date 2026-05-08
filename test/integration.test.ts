@@ -87,19 +87,19 @@ const post = async (
 // ----------------------------------------------------------------------------
 
 describe("query: viewer (per-request context)", () => {
-  test("returns the user id derived from x-user-id header", async () => {
-    const res = await post("{ viewer { id } }", { userId: "ada" });
+  test("viewer.user.id is the User global id derived from x-user-id header", async () => {
+    const res = await post("{ viewer { user { id } } }", { userId: "ada" });
     expect(res.status).toBe(200);
     expect(res.body.errors).toBeUndefined();
     expect(res.body.data).toEqual({
-      viewer: { id: encodeGlobalId("Viewer", "ada") },
+      viewer: { user: { id: encodeGlobalId("User", "ada") } },
     });
   });
 
   test("falls back to anonymous when no header is sent", async () => {
-    const res = await post("{ viewer { id } }");
+    const res = await post("{ viewer { user { id } } }");
     expect(res.body.data).toEqual({
-      viewer: { id: encodeGlobalId("Viewer", "anonymous") },
+      viewer: { user: { id: encodeGlobalId("User", "anonymous") } },
     });
   });
 });
@@ -342,7 +342,7 @@ describe("Relay directive validation (acceptance criterion for T8)", () => {
     const doc = parse(`
       query Q {
         viewer {
-          id
+          user { id }
         }
       }
     `);
@@ -380,7 +380,7 @@ describe("Relay directive validation (acceptance criterion for T8)", () => {
     const doc = parse(`
       query Q @throwOnFieldError {
         viewer {
-          id @required(action: THROW)
+          user { id @required(action: THROW) }
         }
       }
     `);

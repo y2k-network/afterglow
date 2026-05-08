@@ -11,7 +11,8 @@
  *    fields declared as Layers; their service requirements bubble up.
  *  - `GraphQL.Scalar(...)` — a custom Date scalar.
  *  - `GraphQL.Viewer.layer({...})` — Relay's canonical `Query.viewer { ... }`,
- *    a framework-owned `type Viewer implements Node` synthesized at build time.
+ *    a framework-owned `type Viewer { ... }` synthesized at build time.
+ *    Viewer is NOT a Node implementor; @refetchable re-calls Query.viewer.
  *  - `Context.Service` + `ManagedRuntime` for server-scoped DI (TodoStore).
  *  - Per-request services (CurrentUser) derived from the incoming request via
  *    `requestContext` Layer threaded through `GraphQL.toHttpApp`.
@@ -25,7 +26,7 @@
  *   curl -s -X POST http://localhost:4000/graphql \
  *     -H 'content-type: application/json' \
  *     -H 'x-user-id: ada' \
- *     -d '{"query":"{ viewer { id user { id } todos(first: 10) { edges { cursor node { title completed } } } } }"}'
+ *     -d '{"query":"{ viewer { user { id } todos(first: 10) { edges { cursor node { title completed } } } } }"}'
  */
 
 import {
@@ -167,15 +168,18 @@ const TodoNode = GraphQL.Node.layer(Todo)({
 
 // ---- Viewer (framework primitive) ------------------------------------------
 //
-// `GraphQL.Viewer.layer({...})` synthesizes `type Viewer implements Node`
-// with `id: ID!` plus the user-supplied session-scoped fields. The `resolve`
-// function returns the viewer's identity ({ id }) — the framework encodes
-// `id` as `encodeGlobalId("Viewer", identity.id)` for the wire.
+// `GraphQL.Viewer.layer({...})` synthesizes a plain `type Viewer { ... }`
+// with the user-supplied session-scoped fields. Viewer is NOT a Node
+// implementor — Relay's `@refetchable` re-calls `Query.viewer`, never
+// `node(id:)`, so there's no need (and no point) for a global id on Viewer
+// itself. Domain ids live on `viewer.user`, `viewer.todos.edges[].node`, etc.
+//
+// `resolve` returns whatever opaque parent shape the field resolvers want.
 
 const ViewerLayer = GraphQL.Viewer.layer({
   fields: (f) => ({
     user: f(User, {
-      resolve: (v) => Effect.succeed(new User({ id: v.id })),
+      resolve: (v) => Effect.succeed(new User({ id: v.userId })),
     }),
     todos: f(GraphQL.Connection(Todo), {
       resolve: (v, args) =>
@@ -184,7 +188,7 @@ const ViewerLayer = GraphQL.Viewer.layer({
           const page = yield* store.list({
             first: args.first,
             after: args.after,
-            ownerId: v.id,
+            ownerId: v.userId,
           });
           return GraphQL.toConnection(page.rows, {
             cursor: cursorOf,
@@ -196,7 +200,7 @@ const ViewerLayer = GraphQL.Viewer.layer({
   resolve: () =>
     Effect.gen(function* () {
       const cu = yield* CurrentUser;
-      return { id: cu.id };
+      return { userId: cu.id };
     }),
 });
 

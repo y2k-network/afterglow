@@ -414,10 +414,15 @@ test("smoke: custom scalar via GraphQL.Scalar", async () => {
   expect(sdl).toMatch(/now: HarnessDate/);
 });
 
-test("smoke: GraphQL.Viewer.layer synthesizes type Viewer implements Node", async () => {
+test("smoke: GraphQL.Viewer.layer synthesizes plain type Viewer (no Node, no auto-id)", async () => {
   // Viewer alone makes the schema valid — no Node.layer or Query.layer needed.
   const ViewerLayer = Viewer.layer({
-    resolve: () => Effect.succeed({ id: "viewer-1" }),
+    fields: (f) => ({
+      greeting: f(Schema.String, {
+        resolve: (v) => Effect.succeed(`hello ${v.userId}`),
+      }),
+    }),
+    resolve: () => Effect.succeed({ userId: "ada" }),
   });
 
   const SchemaLayer = Layer.mergeAll(ViewerLayer);
@@ -425,49 +430,51 @@ test("smoke: GraphQL.Viewer.layer synthesizes type Viewer implements Node", asyn
 
   const sdl = printSchema(schema);
   expect(sdl).toContain("viewer: Viewer");
-  expect(sdl).toContain("type Viewer implements Node");
+  expect(sdl).toContain("type Viewer {");
+  // Viewer is NOT a Node implementor — Relay's @refetchable re-calls
+  // Query.viewer, never node(id:). Verified against
+  // viewer_query_generator.rs and Relay's test schema.
+  expect(sdl).not.toContain("type Viewer implements Node");
+  // No auto-injected id field.
+  expect(sdl).not.toMatch(/type Viewer \{[^}]*\bid: ID![^}]*\}/);
 
   const result = await execute({
     schema,
-    document: parse(`{ viewer { id } }`),
+    document: parse(`{ viewer { greeting } }`),
     contextValue: Context.empty(),
   });
   expect(result.errors).toBeUndefined();
-  expect((result.data as any).viewer.id).toBe(globalId("Viewer", "viewer-1"));
+  expect((result.data as any).viewer.greeting).toBe("hello ada");
 });
 
-test("smoke: GraphQL.Viewer.layer fields receive parent: { id: string }", async () => {
-  // The Viewer field resolver's `parent` is typed `{ id: string }` —
-  // session-scoped data is loaded via the resolvers. A typo on parent.id
-  // would TS-error (verified separately in the verification protocol).
+test("smoke: GraphQL.Viewer.layer parent type flows from resolve into fields", async () => {
+  // The Viewer field resolver's `parent` type is inferred from `resolve`'s
+  // return type — same way Node.layer flows the Schema.Class type. Typo
+  // guard verified separately in the verification protocol.
   const ViewerLayer = Viewer.layer({
     fields: (f) => ({
-      greeting: f(Schema.String, {
-        resolve: (v) => Effect.succeed(`hello ${v.id}`),
+      label: f(Schema.String, {
+        resolve: (v) => Effect.succeed(`user-${v.userId}@${v.role}`),
       }),
     }),
-    resolve: () => Effect.succeed({ id: "ada" }),
+    resolve: () => Effect.succeed({ userId: "ada", role: "admin" }),
   });
 
   const SchemaLayer = Layer.mergeAll(ViewerLayer);
   const schema = buildSchema(SchemaLayer, null);
 
-  const sdl = printSchema(schema);
-  expect(sdl).toContain("greeting: String");
-
   const result = await execute({
     schema,
-    document: parse(`{ viewer { id greeting } }`),
+    document: parse(`{ viewer { label } }`),
     contextValue: Context.empty(),
   });
   expect(result.errors).toBeUndefined();
-  expect((result.data as any).viewer.id).toBe(globalId("Viewer", "ada"));
-  expect((result.data as any).viewer.greeting).toBe("hello ada");
+  expect((result.data as any).viewer.label).toBe("user-ada@admin");
 });
 
 test("smoke: registering Viewer.layer twice fails at schema-build", () => {
-  const V1 = Viewer.layer({ resolve: () => Effect.succeed({ id: "x" }) });
-  const V2 = Viewer.layer({ resolve: () => Effect.succeed({ id: "y" }) });
+  const V1 = Viewer.layer({ resolve: () => Effect.succeed({ userId: "x" }) });
+  const V2 = Viewer.layer({ resolve: () => Effect.succeed({ userId: "y" }) });
   const SchemaLayer = Layer.mergeAll(V1, V2);
   expect(() => buildSchema(SchemaLayer, null)).toThrow(
     /GraphQL\.Viewer\.layer was registered twice/,
@@ -571,12 +578,16 @@ test("smoke: full integration — viewer + connection + mutation with per-reques
     }),
   );
 
-  // Viewer is a framework primitive — no Schema.Class needed.
+  // Viewer is a framework primitive — no Schema.Class, no Node interface,
+  // no auto-id. We expose `userId` as a plain String field for the test.
   const ViewerLayer = Viewer.layer({
+    fields: (f) => ({
+      userId: f(Schema.String, { resolve: (v) => Effect.succeed(v.userId) }),
+    }),
     resolve: () =>
       Effect.gen(function* () {
         const cu = yield* CurrentUserSvc;
-        return { id: cu.id };
+        return { userId: cu.id };
       }),
   });
 
@@ -644,11 +655,11 @@ test("smoke: full integration — viewer + connection + mutation with per-reques
 
   const r1 = await execute({
     schema,
-    document: parse(`{ viewer { id } }`),
+    document: parse(`{ viewer { userId } }`),
     contextValue: ctx,
   });
   expect(r1.errors).toBeUndefined();
-  expect((r1.data as any).viewer.id).toBe(globalId("Viewer", "alice"));
+  expect((r1.data as any).viewer.userId).toBe("alice");
 
   const r2 = await execute({
     schema,

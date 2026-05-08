@@ -81,20 +81,27 @@ export interface IRNodeFragment {
 
 /**
  * Framework-owned `Viewer` type. Synthesized at lower-time as
- * `type Viewer implements Node { id: ID! ...userFields }` — users supply the
- * session-scoped fields plus a `resolve` that returns the viewer's identity
- * `{ id }`. The id resolver encodes that id as a global ID at lower-time.
+ * `type Viewer { ...userFields }` — users supply the session-scoped fields
+ * plus a `resolve` that returns whatever opaque "viewer parent" object their
+ * field resolvers want to receive.
+ *
+ * Viewer is intentionally NOT a Node implementor: Relay's `@refetchable` on
+ * viewer fragments re-calls `Query.viewer`, never `node(id:)`. There is no
+ * meaningful global id for the viewer itself; domain ids live on
+ * `viewer.user`, `viewer.todos`, etc. Verified against Relay's
+ * `viewer_query_generator.rs` (refetch path) and Relay's own test schema
+ * (`type Viewer { ... }`, no `implements Node`).
  *
  * Mirrors Effect's `HttpApi` framework-owned-container pattern: the type name
- * and shape belong to effect-graphql; users compose fields and identity into
- * it via this single canonical surface.
+ * and shape (Viewer + Query.viewer) belong to effect-graphql; users compose
+ * fields and a parent-resolver into it via this single canonical surface.
  */
 export interface IRViewerFragment {
   readonly kind: "viewer";
   readonly fields: Record<string, IRFieldDef>;
   readonly resolve: (
     ctx: Context.Context<unknown>,
-  ) => Effect.Effect<{ id: string }, unknown, unknown>;
+  ) => Effect.Effect<unknown, unknown, unknown>;
 }
 
 export interface IRObjectFragment {
