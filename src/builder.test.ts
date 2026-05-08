@@ -17,7 +17,7 @@ import {
 import { execute, parse, printSchema } from "graphql";
 import { GraphQL } from "./index.ts";
 import { buildSchema } from "./http.ts";
-import { Node, Query, Mutation, Connection, Subscription, queryField, mutationField, subscriptionField, field, resolve, ID, Scalar, globalId, parseGlobalId, deletedId, toConnection } from "./builder.ts";
+import { Node, Query, Mutation, Connection, Subscription, Viewer, queryField, mutationField, subscriptionField, field, resolve, ID, Scalar, globalId, parseGlobalId, deletedId, toConnection } from "./builder.ts";
 
 // ---------------------------------------------------------------------------
 // Type-level inference assertions
@@ -55,10 +55,13 @@ const _UserNode = Node.layer(HarnessUser)({
       const cu = yield* HarnessCurrentUser;
       return new HarnessUser({ id: cu.id });
     }),
-  viewer: () =>
+});
+
+const _ViewerLayer = Viewer.layer({
+  resolve: () =>
     Effect.gen(function* () {
       const cu = yield* HarnessCurrentUser;
-      return new HarnessUser({ id: cu.id });
+      return { id: cu.id };
     }),
 });
 
@@ -87,6 +90,11 @@ const _QueryLayer = Query.layer({
 type _UserNodeR = Layer.Services<typeof _UserNode>;
 type _AssertUserNodeR = AssertExact<_UserNodeR, HarnessCurrentUser>;
 const _ass1: _AssertUserNodeR = true;
+
+type _ViewerR = Layer.Services<typeof _ViewerLayer>;
+type _AssertViewerR = AssertExact<_ViewerR, HarnessCurrentUser>;
+const _assViewer: _AssertViewerR = true;
+void _assViewer;
 
 type _TodoNodeR = Layer.Services<typeof _TodoNode>;
 type _AssertTodoNodeR = AssertExact<_TodoNodeR, HarnessTodoStore>;
@@ -406,20 +414,18 @@ test("smoke: custom scalar via GraphQL.Scalar", async () => {
   expect(sdl).toMatch(/now: HarnessDate/);
 });
 
-test("smoke: viewer field is registered when a Node.layer supplies one", async () => {
-  class Me extends Schema.Class<Me>("Me")({ id: Schema.String }) {}
-
-  const MeNode = Node.layer(Me)({
-    load: (id) => Effect.succeed(new Me({ id })),
-    viewer: () => Effect.succeed(new Me({ id: "viewer-1" })),
+test("smoke: GraphQL.Viewer.layer synthesizes type Viewer implements Node", async () => {
+  // Viewer alone makes the schema valid — no Node.layer or Query.layer needed.
+  const ViewerLayer = Viewer.layer({
+    resolve: () => Effect.succeed({ id: "viewer-1" }),
   });
 
-  // Even with no Query.layer, viewer alone makes the schema valid.
-  const SchemaLayer = Layer.mergeAll(MeNode);
+  const SchemaLayer = Layer.mergeAll(ViewerLayer);
   const schema = buildSchema(SchemaLayer, null);
 
   const sdl = printSchema(schema);
-  expect(sdl).toContain("viewer: Me");
+  expect(sdl).toContain("viewer: Viewer");
+  expect(sdl).toContain("type Viewer implements Node");
 
   const result = await execute({
     schema,
@@ -427,7 +433,45 @@ test("smoke: viewer field is registered when a Node.layer supplies one", async (
     contextValue: Context.empty(),
   });
   expect(result.errors).toBeUndefined();
-  expect((result.data as any).viewer.id).toBe(globalId("Me", "viewer-1"));
+  expect((result.data as any).viewer.id).toBe(globalId("Viewer", "viewer-1"));
+});
+
+test("smoke: GraphQL.Viewer.layer fields receive parent: { id: string }", async () => {
+  // The Viewer field resolver's `parent` is typed `{ id: string }` —
+  // session-scoped data is loaded via the resolvers. A typo on parent.id
+  // would TS-error (verified separately in the verification protocol).
+  const ViewerLayer = Viewer.layer({
+    fields: (f) => ({
+      greeting: f(Schema.String, {
+        resolve: (v) => Effect.succeed(`hello ${v.id}`),
+      }),
+    }),
+    resolve: () => Effect.succeed({ id: "ada" }),
+  });
+
+  const SchemaLayer = Layer.mergeAll(ViewerLayer);
+  const schema = buildSchema(SchemaLayer, null);
+
+  const sdl = printSchema(schema);
+  expect(sdl).toContain("greeting: String");
+
+  const result = await execute({
+    schema,
+    document: parse(`{ viewer { id greeting } }`),
+    contextValue: Context.empty(),
+  });
+  expect(result.errors).toBeUndefined();
+  expect((result.data as any).viewer.id).toBe(globalId("Viewer", "ada"));
+  expect((result.data as any).viewer.greeting).toBe("hello ada");
+});
+
+test("smoke: registering Viewer.layer twice fails at schema-build", () => {
+  const V1 = Viewer.layer({ resolve: () => Effect.succeed({ id: "x" }) });
+  const V2 = Viewer.layer({ resolve: () => Effect.succeed({ id: "y" }) });
+  const SchemaLayer = Layer.mergeAll(V1, V2);
+  expect(() => buildSchema(SchemaLayer, null)).toThrow(
+    /GraphQL\.Viewer\.layer was registered twice/,
+  );
 });
 
 test("smoke: pipe-resolver shorthand executes at runtime", async () => {
@@ -527,15 +571,12 @@ test("smoke: full integration — viewer + connection + mutation with per-reques
     }),
   );
 
-  class Viewer extends Schema.Class<Viewer>("Viewer")({ id: Schema.String }) {}
-
-  // id: ID! auto-synthesized from Viewer.id; no field(ID, ...) needed
-  const ViewerNode = Node.layer(Viewer)({
-    load: (id) => Effect.succeed(new Viewer({ id })),
-    viewer: () =>
+  // Viewer is a framework primitive — no Schema.Class needed.
+  const ViewerLayer = Viewer.layer({
+    resolve: () =>
       Effect.gen(function* () {
         const cu = yield* CurrentUserSvc;
-        return new Viewer({ id: cu.id });
+        return { id: cu.id };
       }),
   });
 
@@ -585,7 +626,7 @@ test("smoke: full integration — viewer + connection + mutation with per-reques
     }),
   });
 
-  const SchemaLayer = Layer.mergeAll(ViewerNode, TodoNode, QueryLayer, MutationLayer);
+  const SchemaLayer = Layer.mergeAll(ViewerLayer, TodoNode, QueryLayer, MutationLayer);
 
   // Type assertion: union of services from all layers
   type _Services = Layer.Services<typeof SchemaLayer>;

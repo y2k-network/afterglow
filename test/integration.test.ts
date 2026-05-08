@@ -92,14 +92,14 @@ describe("query: viewer (per-request context)", () => {
     expect(res.status).toBe(200);
     expect(res.body.errors).toBeUndefined();
     expect(res.body.data).toEqual({
-      viewer: { id: encodeGlobalId("User", "ada") },
+      viewer: { id: encodeGlobalId("Viewer", "ada") },
     });
   });
 
   test("falls back to anonymous when no header is sent", async () => {
     const res = await post("{ viewer { id } }");
     expect(res.body.data).toEqual({
-      viewer: { id: encodeGlobalId("User", "anonymous") },
+      viewer: { id: encodeGlobalId("Viewer", "anonymous") },
     });
   });
 });

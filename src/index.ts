@@ -25,6 +25,7 @@ export {
   Query,
   Scalar,
   Subscription,
+  Viewer,
   deletedId,
   edgePayload,
   field,

@@ -77,10 +77,24 @@ export interface IRNodeFragment {
     id: string,
     ctx: Context.Context<unknown>,
   ) => Effect.Effect<unknown, unknown, unknown>;
-  /** Optional: registers `viewer: T` on the root Query type. */
-  readonly viewer?: (
+}
+
+/**
+ * Framework-owned `Viewer` type. Synthesized at lower-time as
+ * `type Viewer implements Node { id: ID! ...userFields }` — users supply the
+ * session-scoped fields plus a `resolve` that returns the viewer's identity
+ * `{ id }`. The id resolver encodes that id as a global ID at lower-time.
+ *
+ * Mirrors Effect's `HttpApi` framework-owned-container pattern: the type name
+ * and shape belong to effect-graphql; users compose fields and identity into
+ * it via this single canonical surface.
+ */
+export interface IRViewerFragment {
+  readonly kind: "viewer";
+  readonly fields: Record<string, IRFieldDef>;
+  readonly resolve: (
     ctx: Context.Context<unknown>,
-  ) => Effect.Effect<unknown, unknown, unknown>;
+  ) => Effect.Effect<{ id: string }, unknown, unknown>;
 }
 
 export interface IRObjectFragment {
@@ -133,7 +147,8 @@ export type IRFragment =
   | IRInputFragment
   | IRQueryFragment
   | IRMutationFragment
-  | IRSubscriptionFragment;
+  | IRSubscriptionFragment
+  | IRViewerFragment;
 
 // ---------------------------------------------------------------------------
 // Aggregated IR — what the lowering pipeline operates on after fragments are
@@ -149,6 +164,8 @@ export interface IR {
   readonly queryFields: Record<string, IRFieldDef>;
   readonly mutationFields: Record<string, IRFieldDef>;
   readonly subscriptionFields: Record<string, IRSubscriptionFieldDef>;
+  /** At most one viewer per schema; second registration is a build-time error. */
+  viewer: IRViewerFragment | null;
 }
 
 export const emptyIR = (): IR => ({
@@ -160,6 +177,7 @@ export const emptyIR = (): IR => ({
   queryFields: {},
   mutationFields: {},
   subscriptionFields: {},
+  viewer: null,
 });
 
 export const addFragment = (ir: IR, fragment: IRFragment): void => {
@@ -187,6 +205,14 @@ export const addFragment = (ir: IR, fragment: IRFragment): void => {
       break;
     case "subscription":
       Object.assign(ir.subscriptionFields, fragment.fields);
+      break;
+    case "viewer":
+      if (ir.viewer !== null) {
+        throw new Error(
+          "effect-graphql: GraphQL.Viewer.layer was registered twice. Only one viewer is allowed per schema.",
+        );
+      }
+      ir.viewer = fragment;
       break;
   }
 };

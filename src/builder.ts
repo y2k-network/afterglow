@@ -39,6 +39,7 @@ import type {
   IRScalarFragment,
   IRSubscriptionFieldDef,
   IRSubscriptionFragment,
+  IRViewerFragment,
 } from "./ir.ts";
 import { recordFragment } from "./registry.ts";
 import type {
@@ -178,10 +179,30 @@ const readResolverFn = (
 // Field — used inside Node/Object `fields:` blocks
 // ---------------------------------------------------------------------------
 
+// Connection field overload: a field whose type is `Connection(T)` resolves to
+// a `ConnectionPayload<T>`, and its args automatically include Relay's
+// pagination args (first/after/last/before) — matching the queryField
+// behavior so pagination works the same on Query.todos and Viewer.todos.
+export function field<TParent, T, R = never>(
+  type: ConnectionType<T>,
+  options: {
+    readonly nonNull?: boolean;
+    readonly semanticNonNull?: boolean;
+    readonly description?: string;
+    readonly resolve: (
+      parent: TParent,
+      args: PaginationArgs,
+    ) => Effect.Effect<ConnectionPayload<T>, any, R> | ConnectionPayload<T>;
+  },
+): FieldDef<TParent, R>;
 export function field<TParent, T, R = never, A extends ArgDefs | undefined = undefined>(
   type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top,
   options?: FieldOptions<TParent, T, A extends ArgDefs ? ArgsShape<A> : {}, R> & { args?: A },
-): FieldDef<TParent, R> {
+): FieldDef<TParent, R>;
+export function field(
+  type: any,
+  options?: any,
+): FieldDef<any, any> {
   // GraphQL IDs are non-null by convention (Relay's Node interface requires
   // `id: ID!`), so we default `field(ID, ...)` to nonNull unless the user
   // explicitly opts out. Every other type defaults to wire-nullable (the
@@ -200,7 +221,7 @@ export function field<TParent, T, R = never, A extends ArgDefs | undefined = und
   // private property so `Node.layer` can read it without exposing internals.
   const fd = Object.create(null) as object;
   Object.defineProperty(fd, RAW_FIELD_KEY, { value: raw, enumerable: false });
-  return fd as FieldDef<TParent, R>;
+  return fd as FieldDef<any, any>;
 }
 
 const RAW_FIELD_KEY = Symbol("v2/raw-field");
@@ -475,6 +496,19 @@ type NodeFieldOutput<T> =
  * and without (just a type, default property-name passthrough).
  */
 export interface FieldHelper<T> {
+  // Connection overload — pagination args injected automatically.
+  <Type, R = never>(
+    type: ConnectionType<Type>,
+    options: {
+      readonly nonNull?: boolean;
+      readonly semanticNonNull?: boolean;
+      readonly description?: string;
+      readonly resolve: (
+        parent: T,
+        args: PaginationArgs,
+      ) => Effect.Effect<ConnectionPayload<Type>, any, R> | ConnectionPayload<Type>;
+    },
+  ): FieldDef<T, R>;
   <Type, R = never, A extends ArgDefs | undefined = undefined>(
     type: SchemaClass<Type> | ScalarType<Type> | IDMarker | Schema.Top,
     options: FieldOptions<T, Type, A extends ArgDefs ? ArgsShape<A> : {}, R> & { args?: A },
@@ -508,14 +542,13 @@ export interface FieldHelper<T> {
 export const Node = {
   layer<T>(cls: SchemaClass<T>) {
     const name = classIdentifier(cls);
-    return <RLoad = never, RViewer = never, RFields = never>(
+    return <RLoad = never, RFields = never>(
       config: {
         readonly fields?: (f: FieldHelper<T>) => Record<string, NodeFieldOutput<T>>;
         readonly load: (id: string) => Effect.Effect<T | null, any, RLoad>;
-        readonly viewer?: () => Effect.Effect<T, any, RViewer>;
         readonly description?: string;
       },
-    ): Layer.Layer<never, never, RLoad | RViewer | RFields> => {
+    ): Layer.Layer<never, never, RLoad | RFields> => {
       const load = (
         id: string,
         ctx: Context.Context<unknown>,
@@ -527,17 +560,6 @@ export const Node = {
           return Effect.die(err);
         }
       };
-
-      const viewer = config.viewer
-        ? (ctx: Context.Context<unknown>): Effect.Effect<unknown, unknown, unknown> => {
-            try {
-              const eff = config.viewer!();
-              return Effect.provide(eff, ctx) as Effect.Effect<unknown, unknown, unknown>;
-            } catch (err) {
-              return Effect.die(err);
-            }
-          }
-        : undefined;
 
       // Build the IR fragment lazily inside the Layer's effect. This is what
       // lets transitively-referenced types (custom scalars used by fields)
@@ -581,12 +603,74 @@ export const Node = {
             description: config.description,
             fields,
             load,
-            viewer,
           };
           recordFragment(fragment);
         }),
-      ) as unknown as Layer.Layer<never, never, RLoad | RViewer>;
+      ) as unknown as Layer.Layer<never, never, RLoad>;
     };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Viewer.layer — framework-owned `type Viewer implements Node` synthesis.
+//
+// Mirrors `HttpApi.make(...)` in Effect's `effect/unstable/httpapi`: the
+// container shape (`type Viewer`, `Query.viewer`) belongs to the framework;
+// users compose session-scoped fields and an identity resolver into it.
+//
+// `resolve` returns the viewer's identity `{ id }` — NOT a user-domain
+// Schema.Class instance. The framework synthesizes `id: ID!` and encodes
+// `parent.id` as `encodeGlobalId("Viewer", parent.id)` at lower-time.
+//
+// No `load:` slot — Relay's `@refetchable` on viewer re-calls `Query.viewer`,
+// not `node(id:)`. Removing `load:` matches the actual Relay model.
+//
+// Single-instance: a second `Viewer.layer` registration in a `Layer.mergeAll`
+// throws at schema-build time with a clear message.
+// ---------------------------------------------------------------------------
+
+export const Viewer = {
+  layer<RFields = never, RResolve = never>(
+    config: {
+      readonly fields?: (f: FieldHelper<{ id: string }>) => Record<string, NodeFieldOutput<{ id: string }>>;
+      readonly resolve: () => Effect.Effect<{ id: string }, any, RResolve>;
+      readonly description?: string;
+    },
+  ): Layer.Layer<never, never, RFields | RResolve> {
+    const resolveIdentity = (
+      ctx: Context.Context<unknown>,
+    ): Effect.Effect<{ id: string }, unknown, unknown> => {
+      try {
+        const eff = config.resolve();
+        return Effect.provide(eff, ctx) as Effect.Effect<{ id: string }, unknown, unknown>;
+      } catch (err) {
+        return Effect.die(err) as Effect.Effect<{ id: string }, unknown, unknown>;
+      }
+    };
+
+    return Layer.effectDiscard(
+      Effect.sync(() => {
+        const rawFields = config.fields !== undefined
+          ? config.fields(field as unknown as FieldHelper<{ id: string }>)
+          : {};
+        const fields: Record<string, IRFieldDef> = {};
+        for (const [fname, fdef] of Object.entries(rawFields)) {
+          if (fname === "id") {
+            // Reserved — the framework synthesizes id from the identity.
+            throw new Error(
+              "effect-graphql: GraphQL.Viewer.layer cannot define an `id` field — id is auto-synthesized from the identity returned by `resolve`.",
+            );
+          }
+          fields[fname] = compileFieldEntry(fname, "Viewer", fdef);
+        }
+        const fragment: IRViewerFragment = {
+          kind: "viewer",
+          fields,
+          resolve: resolveIdentity,
+        };
+        recordFragment(fragment);
+      }),
+    ) as unknown as Layer.Layer<never, never, RFields | RResolve>;
   },
 };
 

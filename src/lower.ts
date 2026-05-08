@@ -52,6 +52,7 @@ import {
   buildNodesQueryField,
   buildPageInfoType,
   connectionArgs,
+  encodeGlobalId,
 } from "./relay.ts";
 import { schemaToInputType, schemaToScalar } from "./schema-bridge.ts";
 import { standardScalarTypes } from "./standard-scalars.ts";
@@ -93,13 +94,11 @@ export function lower<R, ReqR = unknown>(
   options: LowerOptions = {},
 ): GraphQLSchema {
   const hasNodes = ir.nodes.size > 0;
-  const hasViewer = Array.from(ir.nodes.values()).some(
-    (n) => n.viewer !== undefined,
-  );
+  const hasViewer = ir.viewer !== null;
   const hasQueryFields = Object.keys(ir.queryFields).length > 0;
   if (!hasNodes && !hasQueryFields && !hasViewer) {
     throw new Error(
-      "effect-graphql: at least one query field is required (call GraphQL.Query.layer({ ... }) or register a Node with a viewer option)",
+      "effect-graphql: at least one query field is required (call GraphQL.Query.layer({ ... }) or register GraphQL.Viewer.layer({ ... }))",
     );
   }
 
@@ -116,7 +115,10 @@ export function lower<R, ReqR = unknown>(
     registry.set(frag.name, scalar);
   }
 
-  const nodeInterface: GraphQLInterfaceType | null = hasNodes
+  // Node interface is required for both `node(id:)` queries and so the
+  // synthesized `Viewer` can `implements Node` (enabling `@refetchable` to
+  // re-query `Query.viewer`).
+  const nodeInterface: GraphQLInterfaceType | null = (hasNodes || hasViewer)
     ? buildNodeInterface((obj) => {
         if (typeof obj === "object" && obj !== null) {
           const tn = (obj as { __typename?: unknown }).__typename;
@@ -147,6 +149,34 @@ export function lower<R, ReqR = unknown>(
       fields: () => buildObjectFields(frag.name, frag.fields, registry, runtime),
     });
     registry.set(name, obj);
+  }
+
+  // Synthesize the framework-owned `Viewer` type when registered. Implements
+  // Node so Relay's `@refetchable` can re-query `Query.viewer`. The `id`
+  // field is auto-synthesized: it encodes the identity returned by
+  // `Viewer.layer`'s `resolve` as `encodeGlobalId("Viewer", parent.id)`.
+  if (ir.viewer !== null) {
+    const viewerFields: Record<string, IRFieldDef> = { ...ir.viewer.fields };
+    if (!("id" in viewerFields)) {
+      viewerFields["id"] = {
+        type: { kind: "scalar", name: "ID" },
+        nonNull: true,
+        args: {},
+        resolve: (parent, _args, _ctx, _info) => {
+          const rawId =
+            typeof parent === "object" && parent !== null
+              ? String((parent as Record<string, unknown>)["id"] ?? "")
+              : "";
+          return Effect.succeed(encodeGlobalId("Viewer", rawId));
+        },
+      };
+    }
+    const viewerObj = new GraphQLObjectType({
+      name: "Viewer",
+      interfaces: () => (nodeInterface ? [nodeInterface] : []),
+      fields: () => buildObjectFields("Viewer", viewerFields, registry, runtime),
+    });
+    registry.set("Viewer", viewerObj);
   }
 
   // Pass 1.5 — connections.
@@ -212,17 +242,22 @@ export function lower<R, ReqR = unknown>(
     queryFieldMap[name] = buildFieldConfig<R, ReqR>(def, registry, runtime);
   }
 
-  // Viewer fields: for each node type that declared a viewer, register
-  // `viewer: T` on the Query. Per design §4.1: there's only ever one
-  // canonical viewer, but multiple nodes registering one is a user error
-  // we surface lazily (last-write-wins matches v1).
-  for (const [name, frag] of ir.nodes) {
-    if (frag.viewer === undefined) continue;
+  // Framework-owned Viewer: when `GraphQL.Viewer.layer({...})` was registered,
+  // wire `Query.viewer: Viewer` with the supplied identity resolver. The
+  // synthesized `type Viewer` was added to the registry above. We tag the
+  // resolved value with `__typename: "Viewer"` so the Node interface's
+  // resolveType (a typename sniff) always picks Viewer cleanly.
+  if (ir.viewer !== null) {
+    const userResolve = ir.viewer.resolve;
     const viewerCfg: IRFieldDef = {
-      type: { kind: "named", name },
+      type: { kind: "named", name: "Viewer" },
       nonNull: false,
       args: {},
-      resolve: (_parent, _args, ctx, _info) => frag.viewer!(ctx),
+      resolve: (_parent, _args, ctx, _info) =>
+        Effect.map(userResolve(ctx), (identity) => ({
+          ...identity,
+          __typename: "Viewer",
+        })),
     };
     queryFieldMap["viewer"] = buildFieldConfig<R, ReqR>(viewerCfg, registry, runtime);
   }

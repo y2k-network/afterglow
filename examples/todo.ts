@@ -10,7 +10,8 @@
  *  - `GraphQL.Query.layer({...})` / `Mutation.layer({...})` — query/mutation
  *    fields declared as Layers; their service requirements bubble up.
  *  - `GraphQL.Scalar(...)` — a custom Date scalar.
- *  - `Node.layer(...).viewer` — Relay's canonical `viewer { ... }` query field.
+ *  - `GraphQL.Viewer.layer({...})` — Relay's canonical `Query.viewer { ... }`,
+ *    a framework-owned `type Viewer implements Node` synthesized at build time.
  *  - `Context.Service` + `ManagedRuntime` for server-scoped DI (TodoStore).
  *  - Per-request services (CurrentUser) derived from the incoming request via
  *    `requestContext` Layer threaded through `GraphQL.toHttpApp`.
@@ -24,7 +25,7 @@
  *   curl -s -X POST http://localhost:4000/graphql \
  *     -H 'content-type: application/json' \
  *     -H 'x-user-id: ada' \
- *     -d '{"query":"{ viewer { id } todos(first: 10) { edges { cursor node { title completed } } } }"}'
+ *     -d '{"query":"{ viewer { id user { id } todos(first: 10) { edges { cursor node { title completed } } } } }"}'
  */
 
 import {
@@ -147,11 +148,6 @@ export class CurrentUser extends Context.Service<
 const UserNode = GraphQL.Node.layer(User)({
   // No `fields:` — id: ID! is auto-synthesized from User.id.
   load: (id) => Effect.succeed(new User({ id })),
-  viewer: () =>
-    Effect.gen(function* () {
-      const cu = yield* CurrentUser;
-      return new User({ id: cu.id });
-    }),
 });
 
 const TodoNode = GraphQL.Node.layer(Todo)({
@@ -166,6 +162,41 @@ const TodoNode = GraphQL.Node.layer(Todo)({
     Effect.gen(function* () {
       const store = yield* TodoStore;
       return yield* store.findById(id);
+    }),
+});
+
+// ---- Viewer (framework primitive) ------------------------------------------
+//
+// `GraphQL.Viewer.layer({...})` synthesizes `type Viewer implements Node`
+// with `id: ID!` plus the user-supplied session-scoped fields. The `resolve`
+// function returns the viewer's identity ({ id }) — the framework encodes
+// `id` as `encodeGlobalId("Viewer", identity.id)` for the wire.
+
+const ViewerLayer = GraphQL.Viewer.layer({
+  fields: (f) => ({
+    user: f(User, {
+      resolve: (v) => Effect.succeed(new User({ id: v.id })),
+    }),
+    todos: f(GraphQL.Connection(Todo), {
+      resolve: (v, args) =>
+        Effect.gen(function* () {
+          const store = yield* TodoStore;
+          const page = yield* store.list({
+            first: args.first,
+            after: args.after,
+            ownerId: v.id,
+          });
+          return GraphQL.toConnection(page.rows, {
+            cursor: cursorOf,
+            hasNextPage: page.hasNextPage,
+          });
+        }),
+    }),
+  }),
+  resolve: () =>
+    Effect.gen(function* () {
+      const cu = yield* CurrentUser;
+      return { id: cu.id };
     }),
 });
 
@@ -224,6 +255,7 @@ const MutationLayer = GraphQL.Mutation.layer({
 export const SchemaLayer = Layer.mergeAll(
   UserNode,
   TodoNode,
+  ViewerLayer,
   QueryLayer,
   MutationLayer,
 );
