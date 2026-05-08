@@ -45,6 +45,11 @@ export interface ToHttpAppOptions<R, RA extends R> {
   readonly graphiql?: HandlerOptions<unknown>["graphiql"];
   readonly persistedQueries?: HandlerOptions<unknown>["persistedQueries"];
   readonly executor?: HandlerOptions<unknown>["executor"];
+  /**
+   * Suppress lint warnings by code (e.g. `["RELAY-104"]`). Errors are NEVER
+   * mutable. See `src/lint.ts` for the full set of codes.
+   */
+  readonly muteLintWarnings?: ReadonlyArray<string>;
 }
 
 /**
@@ -79,7 +84,9 @@ export const toHttpApp = <R, RA extends R>(
     return null;
   });
 
-  const schema = lower<RA, Exclude<R, RA>>(ir, options.runtime);
+  const schema = lower<RA, Exclude<R, RA>>(ir, options.runtime, {
+    muteLintWarnings: options.muteLintWarnings,
+  });
 
   const handlerOptions: HandlerOptions<Exclude<R, RA>> = {
     requestContext: options.requestContext,
@@ -101,9 +108,14 @@ export const toHttpApp = <R, RA extends R>(
  * without the HTTP wrapper. Useful for tests, alternative transports, or
  * passing the schema to graphql-js's `execute` directly.
  */
+export interface BuildSchemaOptions {
+  readonly muteLintWarnings?: ReadonlyArray<string>;
+}
+
 export const buildSchema = <R, RA extends R>(
   schemaLayer: Layer.Layer<never, never, R>,
   runtime: ManagedRuntime.ManagedRuntime<RA, never> | null,
+  options: BuildSchemaOptions = {},
 ) => {
   const { ir } = withFragmentCapture(() => {
     const buildEff = Layer.build(schemaLayer);
@@ -111,5 +123,7 @@ export const buildSchema = <R, RA extends R>(
     Effect.runSync(scoped);
     return null;
   });
-  return lower<RA, Exclude<R, RA>>(ir, runtime);
+  return lower<RA, Exclude<R, RA>>(ir, runtime, {
+    muteLintWarnings: options.muteLintWarnings,
+  });
 };

@@ -2,12 +2,12 @@
 
 A Relay-purpose-built GraphQL server with an Effect-native execution layer.
 
-Install it, define your nodes, run it. Your schema is already speaking Relay's
-full vocabulary: every client directive declared, every connection convention
-enforced, the `Node` interface with base64 global IDs in place, the canonical
-`viewer` field one call away. Configuration is reserved for the things that
-are genuinely yours — your services, your auth, your route. The shape of the
-schema is not configurable; it is correct.
+Install it, declare your nodes as Layers, run it. Your schema is already
+speaking Relay's full vocabulary: every client directive declared, every
+connection convention enforced, the `Node` interface with base64 global IDs
+in place, the canonical `Viewer` session root one call away. Configuration
+is reserved for the things that are genuinely yours — your services, your
+auth, your route. The shape of the schema is not configurable; it is correct.
 
 > Status: pre-1.0. v1 is in active development. The public API may shift while
 > Effect v4 itself is in beta.
@@ -16,104 +16,151 @@ schema is not configurable; it is correct.
 
 Three legs:
 
-- **Effect-native.** Resolvers ARE Effects: `(parent, args, ctx, info) =>
-  Effect<T, E, R>`. Typed errors propagate through the schema's signature.
-  Service requirements (`R`) accumulate at the builder level the same way
-  they accumulate in `Effect.flatMap`. There is no parallel DI system, no
-  Promise interop layer, no untyped error envelope.
-- **Relay-purpose.** The structural pieces relay-compiler refuses to compile
-  without — `Node`, global IDs, Cursor Connections — are produced by
-  `builder.node()` and `builder.connection()`. Every Relay client directive
-  is declared on every schema. The `viewer` field, the canonical
-  current-user entry point, is `builder.viewer({ type, resolve })`. None of
-  these are plugins or extensions; they are the core.
-- **Zero-config.** You don't pick a connection field-name strategy. You don't
-  decide whether to declare `@catch` on this schema or that one. You don't
-  wire `node(id:)` and `nodes(ids:)` yourself. The shape is the canonical
-  Relay shape. The directives are the full Relay set. The conventions are
-  the conventions Relay's documentation describes — and the ones it
-  *doesn't*, but the runtime depends on.
+- **Effect-native.** Resolvers ARE Effects: each `resolve` returns
+  `Effect<T, E, R>`. Typed errors propagate through the schema. Service
+  requirements (`R`) accumulate across every Layer in the schema and are
+  discharged in two tiers — a server-scoped `ManagedRuntime<R>` and a
+  per-request `Layer`. There is no parallel DI system, no Promise interop
+  layer, no untyped error envelope.
+- **Relay-purpose.** The structural pieces relay-compiler refuses to
+  compile without — `Node`, global IDs, Cursor Connections — are produced
+  by `GraphQL.Node.layer(...)` and `GraphQL.Connection(...)`. Every Relay
+  client directive is declared on every schema. The canonical
+  current-user entry point is `GraphQL.Viewer.layer({...})`, a framework
+  primitive synthesizing `type Viewer { ... }` and registering
+  `Query.viewer`. None of these are plugins or extensions; they are the
+  core.
+- **Zero-config.** You don't pick a connection field-name strategy. You
+  don't decide whether to declare `@catch` on this schema or that one.
+  You don't wire `node(id:)` and `nodes(ids:)` yourself. The shape is
+  the canonical Relay shape. The directives are the full Relay set. The
+  conventions are the conventions Relay's documentation describes — and
+  the ones it *doesn't*, but the runtime depends on.
 
-Existing TypeScript schema builders (Pothos, Nexus, TypeGraphQL) are mature
-and good at what they do. They are general-purpose. @athanor/alembic sits at a
-narrower point in the design space: a server for teams that have decided
-they're using Relay, written against Effect.
+Existing TypeScript schema builders (Pothos, Nexus, TypeGraphQL) are
+mature and good at what they do. They are general-purpose.
+@athanor/alembic sits at a narrower point in the design space: a server
+for teams that have decided they are using Relay, written against
+Effect.
 
 ## What's baked in
 
 These are not opt-in. Every schema produced by @athanor/alembic gets them.
 
-- **`Node` interface and global IDs.** `Node { id: ID! }` is on the schema;
-  every type registered with `builder.node()` implements it. Global IDs
-  are `base64(typename + ":" + rawId)`. Your `loadOne(id)` receives the
-  raw id with the typename stripped.
+- **`Node` interface and global IDs.** `Node { id: ID! }` is on every
+  schema; every `GraphQL.Node.layer(T)` type implements it. Global IDs
+  are `base64(typename + ":" + rawId)`. `load(id)` receives the raw id
+  with the typename stripped. `id: ID!` is auto-synthesized from the
+  Schema.Class's `id` property — you do not declare it.
 - **`node(id:)` and `nodes(ids:)` queries.** Both are auto-added when at
   least one node type is registered. `nodes` preserves order and returns
   `null` at the index of any unknown id.
-- **Cursor Connections.** `builder.connection(nodeRef)` synthesizes the
-  full Connection / Edge / PageInfo shape with the canonical Relay field
-  names and nullability — `edges: [Edge]`, `pageInfo: PageInfo!`,
+- **Cursor Connections.** `GraphQL.Connection(T)` synthesizes the full
+  `Connection` / `Edge` / `PageInfo` shape with the canonical Relay
+  field names and nullability — `edges: [Edge]`, `pageInfo: PageInfo!`,
   `cursor: String!`, `node` nullable, `hasNextPage`/`hasPreviousPage`
   non-null, `startCursor`/`endCursor` nullable. `first` / `last` /
-  `after` / `before` are injected onto every connection field.
-- **All Relay client directives declared.** Around twenty-six directives
-  spanning error handling (`@required`, `@throwOnFieldError`, `@catch`),
-  fragment composition (`@inline`, `@no_inline`, `@relay`, `@alias`,
-  `@dangerously_unaliased_fixme`), connections (`@connection`,
-  `@stream_connection`, `@refetchable`), connection mutations
-  (`@appendEdge`, `@prependEdge`, `@appendNode`, `@prependNode`,
-  `@deleteEdge`, `@deleteRecord`), incremental delivery (`@defer`,
-  `@stream`), 3D (`@match`, `@module`), and miscellaneous
+  `after` / `before` args are injected onto every connection field. The
+  Connection / Edge types auto-register the first time a field
+  references `Connection(T)` — no separate `Connection.layer(T)` is
+  required (though one is exported for users who want to register a
+  Connection without referencing it).
+- **All Relay client directives declared.** Around twenty-six
+  directives spanning error handling (`@required`, `@throwOnFieldError`,
+  `@catch`), fragment composition (`@inline`, `@no_inline`, `@relay`,
+  `@alias`, `@dangerously_unaliased_fixme`), connections
+  (`@connection`, `@stream_connection`, `@refetchable`), connection
+  mutations (`@appendEdge`, `@prependEdge`, `@appendNode`,
+  `@prependNode`, `@deleteEdge`, `@deleteRecord`), incremental delivery
+  (`@defer`, `@stream`), 3D (`@match`, `@module`), and miscellaneous
   (`@waterfall`, `@raw_response_type`, `@updatable`, `@assignable`,
   `@fetchable`, `@prefer_fetchable`, `@semanticNonNull`). The full set
   lives in [`src/relay-directives.ts`](./src/relay-directives.ts) and
   [`src/relay-3d.ts`](./src/relay-3d.ts).
-- **First-class `viewer`.** `builder.viewer({ type, resolve })` registers
-  Relay's canonical viewer query field. `viewer` is the conventional
-  entry point for current-user / session-scoped data; the framework ships
-  it as a primitive instead of asking each user to spell it.
+- **Standard scalars.** `DateTime`, `Date`, `JSON`, `URL`, `UUID`,
+  `BigInt`, and `EmailAddress` ship registered on every schema, named
+  per the [graphql-scalars](https://the-guild.dev/graphql/scalars)
+  convention. The matching Effect Schema codecs are exported under
+  `standardSchemas` for use in input types.
+- **`@semanticNonNull` auto-emit.** Every wire-nullable field whose
+  Effect Schema is non-null is automatically annotated with
+  `@semanticNonNull`. Relay v18+ reads the directive and generates
+  non-null TypeScript types on the client when the operation opts into
+  `@throwOnFieldError`. See
+  [Nullability — wire vs semantic](#nullability--wire-vs-semantic).
+- **First-class `Viewer.layer`.** `GraphQL.Viewer.layer({...})`
+  registers `Query.viewer: Viewer` and synthesizes a plain
+  `type Viewer { ... }` from the supplied fields. Viewer is *not* a
+  Node implementor; see [Viewer](#viewer).
 - **GraphiQL at the GraphQL endpoint.** The same route serves JSON
   operations and the in-browser GraphiQL IDE, content-negotiated by the
   `Accept` header. Programmatic clients are unaffected.
-- **Pre-registered persisted queries.** When a `persistedQueries.store`
-  is supplied, requests reference operations by hash (Relay's
+- **Pre-registered persisted queries.** Supply a
+  `persistedQueries.store` — any `{ get(hash): string | undefined }`
+  object — and requests reference operations by hash (Relay's
   `--persist-output` model). With `required: true` ad-hoc queries are
-  rejected — strict allowlist by construction.
+  rejected: strict allowlist by construction.
+- **`graphql-transport-ws` subscriptions.** `GraphQL.toWebSocketApp`
+  exposes the schema over the modern subprotocol. Legacy
+  `subscriptions-transport-ws` is intentionally unsupported, matching
+  Relay.
+- **Opt-in BFS executor.** A level-order scheduler that runs every
+  field at a given depth concurrently, turning each level into a
+  natural batching window. Off by default; pass `executor: "bfs"` to
+  `toHttpApp` to enable.
 
-The following ship as in-flight v1 work — the directive declarations are
-already on the schema; the auto-emit / library plumbing lands in T17 and
-T24:
+## Pit of success — what we catch for you
 
-- **`@semanticNonNull` (T17, in flight).** The `@semanticNonNull` directive
-  is already declared. Auto-emission from non-null Effect Schemas — so
-  resolvers can return null on error without losing the "this field is
-  semantically non-null" information at the type-system level — is
-  landing in T17.
-- **Standard scalar library (T24, in flight).** Built-in graphql-js scalars
-  (`String`, `Int`, `Float`, `Boolean`, `ID`) are exported via
-  [`scalars`](./src/scalars.ts). The standard library extension —
-  `DateTime`, `Date`, `JSON`, `URL`, `UUID`, `BigInt`, `EmailAddress`,
-  shipped as automatically-registered scalars — lands in T24. Until then,
-  declare them yourself with `builder.scalar()` (see
-  [Custom scalars](#custom-scalars-via-effect-schema)).
+Every schema build runs a Relay anti-pattern linter against the
+collected IR. Errors aggregate and throw at `GraphQL.toHttpApp(...)` /
+`GraphQL.buildSchema(...)`; warnings print via `console.warn` and
+proceed. Codes are stable — once shipped they don't renumber.
 
-### Configuration is reserved for the things that ARE yours
+**Errors (build fails):**
 
-- **Services and Layer.** Server-scoped DB pool, cache, auth, etc. — your
-  domain code, expressed as `Context.Service` keys composed into a
-  `ManagedRuntime<R>`.
-- **Per-request context.** `currentUser`, `requestId`, span — produced by
-  a `Layer<ReqR, E, HttpServerRequest>` passed to `toHttpApp`.
-- **HTTP route path and port.** You mount the app at whatever path your
-  router prefers, on whatever port your platform assigns.
-- **Persisted-query store + strict-allowlist mode.** The store interface is
-  `{ get(hash): string | undefined }` — plug in a `Map`, a Redis lookup,
-  a lazy loader. `required: true` switches to allowlist mode.
-- **Opt-in BFS executor.** A level-order scheduler that runs every field
-  at a given depth concurrently, turning each level into a natural
-  batching window. Off by default; flip a flag at `toHttpApp` time.
-- **Production GraphiQL on/off.** GraphiQL is on by default; pass
-  `graphiql: false` to disable it in production.
+- `RELAY-001` — A type whose name ends in `Connection` is missing
+  `edges` / `pageInfo`. Use `GraphQL.Connection(T)` instead of
+  hand-rolling.
+- `RELAY-002` — A type whose name ends in `Edge` is missing `cursor` /
+  `node`, or `cursor` is not `String`. The connection spec requires
+  both, with String cursors.
+- `RELAY-003` — A `Node`-implementing type is missing `id: ID!` (or
+  has it nullable). Normally auto-synthesized — surfaces a clearer
+  message if some internal codepath bypasses the synthesis.
+- `RELAY-004` — An input/argument schema requires Effect services to
+  decode. GraphQL inputs must be sync-decodable
+  (`DecodingServices = never`).
+
+**Warnings (likely, not certain):**
+
+- `RELAY-101` — Mutation field name matches `delete*` / `remove*` /
+  `*Deleted` but the return is not `ID`-shaped. Relay's `@deleteRecord`
+  / `@deleteEdge` only operate on ID returns. Fix: return
+  `GraphQL.deletedId(typename, rawId)`.
+- `RELAY-102` — Field name ends in `Edge` but the return type isn't an
+  Edge. Fix: return `GraphQL.edgePayload(cursor, node)` for
+  `@appendEdge` / `@prependEdge` mutations.
+- `RELAY-103` — Mutation returns a void-shaped scalar (e.g. `Boolean`)
+  or an empty object. Relay can't merge updates without at least the
+  changed record's id.
+- `RELAY-104` — An object type has `id: ID!` but isn't a Node. Likely
+  meant `GraphQL.Node.layer(T)` — Node enables `node(id:)` lookups and
+  `@refetchable`.
+- `RELAY-105` — A field literally named `cursor` is not typed
+  `String`. Cursors are opaque to Relay.
+- `RELAY-106` — A field returns a hand-rolled `*Connection` (not built
+  via `GraphQL.Connection(T)`) and has no pagination args. The
+  framework auto-injects `first/last/after/before` only on
+  framework-built connections.
+
+To suppress a specific warning code (errors are NEVER mutable):
+
+```ts
+GraphQL.toHttpApp(SchemaLayer, {
+  runtime,
+  muteLintWarnings: ["RELAY-104"],
+})
+```
 
 ## Install
 
@@ -121,21 +168,20 @@ T24:
 bun add @athanor/alembic graphql effect@beta
 ```
 
-`graphql` is a peer dependency. `effect` must resolve to a v4 beta — pin
-to `^4.0.0-beta.x` if you do not want minor-version drift.
+`graphql` is a peer dependency. `effect` must resolve to a v4 beta —
+pin to `^4.0.0-beta.x` if you do not want minor-version drift.
 
 ## Quick start
 
-For the runnable end-to-end source, see
-[`examples/todo.ts`](./examples/todo.ts). It demonstrates `builder.node`
-+ `loadOne`, `builder.connection`, `builder.input`, a custom `Date`
-scalar via `builder.scalar`, the Relay `viewer` query field via
-`builder.viewer`, server-scoped DI through `ManagedRuntime`,
-per-request `CurrentUser` via a Layer, and mounting via `Bun.serve()`.
+The runnable end-to-end source lives at
+[`examples/todo.ts`](./examples/todo.ts). The walkthrough below is the
+same code, condensed.
 
-A condensed walkthrough — define a `User` and `Todo` node, register the
-canonical `viewer` query, add a `todos` connection, and bridge to
-`Bun.serve()`:
+A schema is built from Layers. Each `*.layer(...)` call returns a
+`Layer<never, never, R>` whose `R` is the union of services its
+resolvers yield. `Layer.mergeAll(...)` composes them; `toHttpApp`
+discharges the merged `R` into a server-scoped `ManagedRuntime` plus a
+per-request `requestContext` Layer.
 
 ```ts
 // app.ts
@@ -144,157 +190,232 @@ import {
   Effect,
   Layer,
   ManagedRuntime,
+  Ref,
   Schema,
 } from "effect"
 import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http"
-import {
-  createBuilder,
-  encodeGlobalId,
-  scalars,
-  toHttpApp,
-} from "@athanor/alembic"
+import { GraphQL } from "@athanor/alembic"
 
-interface Todo {
-  readonly id: string
-  readonly title: string
-  readonly completed: boolean
-  readonly ownerId: string
-}
-interface User { readonly id: string }
+// ---- Domain types --------------------------------------------------
 
-// Server-scoped service.
-class TodoStore extends Context.Service<
-  TodoStore,
-  {
-    readonly findById: (id: string) => Effect.Effect<Todo | null>
-    readonly list: (args: {
-      readonly first?: number
-      readonly after?: string
-      readonly ownerId: string
-    }) => Effect.Effect<{
-      readonly rows: ReadonlyArray<Todo>
-      readonly hasNextPage: boolean
-    }>
-  }
->()("TodoStore") {}
+class User extends Schema.Class<User>("User")({
+  id: Schema.String,
+}) {}
 
-// Per-request service — the authenticated user, derived from the request.
+class Todo extends Schema.Class<Todo>("Todo")({
+  id: Schema.String,
+  title: Schema.String,
+  completed: Schema.Boolean,
+  ownerId: Schema.String,
+  createdAt: Schema.DateFromString,
+}) {}
+
+class CreateTodoInput extends Schema.Class<CreateTodoInput>(
+  "CreateTodoInput",
+)({ title: Schema.String }) {}
+
+// ---- Custom Date scalar (pretty-prints under `Todo.createdAt`) -----
+
+const DateScalar = GraphQL.Scalar("Date", Schema.DateFromString)
+
+// ---- Server-scoped service ----------------------------------------
+
+class TodoStore extends Context.Service<TodoStore, {
+  findById(id: string): Effect.Effect<Todo | null>
+  list(args: { first?: number; after?: string; ownerId: string }):
+    Effect.Effect<{ rows: ReadonlyArray<Todo>; hasNextPage: boolean }>
+  create(args: { title: string; ownerId: string }): Effect.Effect<Todo>
+  delete(id: string): Effect.Effect<void>
+}>()("TodoStore") {}
+
+const cursorOf = (t: Todo): string =>
+  Buffer.from(`cursor:${t.id}`).toString("base64")
+
+const TodoStoreLive = Layer.effect(TodoStore)(
+  Effect.gen(function* () {
+    const todos = yield* Ref.make<ReadonlyArray<Todo>>([])
+    let nextId = 1
+    return TodoStore.of({
+      findById: (id) =>
+        Ref.get(todos).pipe(
+          Effect.map((rows) => rows.find((t) => t.id === id) ?? null),
+        ),
+      list: ({ first, after, ownerId }) =>
+        Effect.gen(function* () {
+          const rows = yield* Ref.get(todos)
+          const owned = rows.filter((t) => t.ownerId === ownerId)
+          const start = after !== undefined
+            ? owned.findIndex((t) => cursorOf(t) === after) + 1
+            : 0
+          const sliced = owned.slice(start)
+          const limit = first ?? sliced.length
+          const page = sliced.slice(0, limit)
+          return { rows: page, hasNextPage: sliced.length > page.length }
+        }),
+      create: ({ title, ownerId }) =>
+        Effect.gen(function* () {
+          const todo = new Todo({
+            id: String(nextId++),
+            title,
+            completed: false,
+            ownerId,
+            createdAt: new Date(),
+          })
+          yield* Ref.update(todos, (rows) => [...rows, todo])
+          return todo
+        }),
+      delete: (id) =>
+        Ref.update(todos, (rows) => rows.filter((t) => t.id !== id)),
+    })
+  }),
+)
+
+// ---- Per-request service ------------------------------------------
+
 class CurrentUser extends Context.Service<
   CurrentUser,
   { readonly id: string }
 >()("CurrentUser") {}
 
-// Build the schema. Each step returns a fresh builder with a (possibly)
-// widened `R` accumulating every service the resolvers yield.
-const b0 = createBuilder()
+// ---- Node Layers --------------------------------------------------
 
-const { ref: userRef, builder: b1 } = b0.node<User, never>("User", {
-  fields: () => ({
-    id: {
-      type: scalars.ID,
-      nonNull: true,
-      resolve: (u) => Effect.succeed(encodeGlobalId("User", u.id)),
-    },
-  }),
-  loadOne: (id) => Effect.succeed({ id }),
+const UserNode = GraphQL.Node.layer(User)({
+  // No `fields:` — `id: ID!` is auto-synthesized from User.id.
+  load: (id) => Effect.succeed(new User({ id })),
 })
 
-const { ref: todoRef, builder: b2 } = b1.node<Todo, TodoStore>("Todo", {
-  fields: () => ({
-    id: {
-      type: scalars.ID,
-      nonNull: true,
-      resolve: (t) => Effect.succeed(encodeGlobalId("Todo", t.id)),
-    },
-    title:     { type: scalars.String,  nonNull: true,
-                 resolve: (t) => Effect.succeed(t.title) },
-    completed: { type: scalars.Boolean, nonNull: true,
-                 resolve: (t) => Effect.succeed(t.completed) },
+const TodoNode = GraphQL.Node.layer(Todo)({
+  fields: (f) => ({
+    title: Schema.String,           // bare schema — passthrough
+    completed: Schema.Boolean,      // bare schema — passthrough
+    createdAt: f(DateScalar),       // typed slot via the field helper
   }),
-  loadOne: (id) =>
+  load: (id) =>
     Effect.gen(function* () {
       const store = yield* TodoStore
       return yield* store.findById(id)
     }),
 })
 
-const { ref: todoConnRef, builder: b3 } = b2.connection(todoRef)
+// ---- Viewer (framework primitive) ---------------------------------
 
-// Canonical Relay viewer.
-const b4 = b3.viewer<User, CurrentUser>({
-  type: userRef,
-  resolve: () =>
-    Effect.gen(function* () {
-      const cu = yield* CurrentUser
-      return { id: cu.id }
+const ViewerLayer = GraphQL.Viewer.layer({
+  fields: (f) => ({
+    user: f(User, {
+      resolve: (v) => Effect.succeed(new User({ id: v.userId })),
     }),
-})
-
-// Other root query fields. `first` / `last` / `after` / `before` on
-// connection fields are auto-typed because `type` is a ConnectionRef.
-const b5 = b4.queryType({
-  fields: () => ({
-    todos: {
-      type: todoConnRef,
-      nonNull: true,
-      resolve: (_p, args) =>
+    todos: f(GraphQL.Connection(Todo), {
+      resolve: (v, args) =>
         Effect.gen(function* () {
           const store = yield* TodoStore
-          const cu = yield* CurrentUser
           const page = yield* store.list({
             first: args.first,
             after: args.after,
-            ownerId: cu.id,
+            ownerId: v.userId,
           })
-          const edges = page.rows.map((node) => ({
-            node,
-            cursor: Buffer.from(`cursor:${node.id}`).toString("base64"),
-          }))
-          return {
-            edges,
-            pageInfo: {
-              hasNextPage: page.hasNextPage,
-              hasPreviousPage: false,
-              startCursor: edges[0]?.cursor ?? null,
-              endCursor: edges[edges.length - 1]?.cursor ?? null,
-            },
-          }
+          return GraphQL.toConnection(page.rows, {
+            cursor: cursorOf,
+            hasNextPage: page.hasNextPage,
+          })
         }),
-    },
+    }),
+  }),
+  resolve: () =>
+    Effect.gen(function* () {
+      const cu = yield* CurrentUser
+      return { userId: cu.id }
+    }),
+})
+
+// ---- Query / Mutation Layers --------------------------------------
+
+const QueryLayer = GraphQL.Query.layer({
+  todos: GraphQL.queryField(GraphQL.Connection(Todo), {
+    resolve: (_root, args) =>
+      Effect.gen(function* () {
+        const store = yield* TodoStore
+        const cu = yield* CurrentUser
+        const page = yield* store.list({
+          first: args.first,
+          after: args.after,
+          ownerId: cu.id,
+        })
+        return GraphQL.toConnection(page.rows, {
+          cursor: cursorOf,
+          hasNextPage: page.hasNextPage,
+        })
+      }),
   }),
 })
 
-// Server-scoped Layer + ManagedRuntime.
-const TodoStoreLive = Layer.succeed(TodoStore)(
-  TodoStore.of({
-    findById: (id) =>
-      Effect.succeed({ id, title: "Read DESIGN.md", completed: false, ownerId: "ada" }),
-    list: () =>
-      Effect.succeed({ rows: [], hasNextPage: false }),
+const MutationLayer = GraphQL.Mutation.layer({
+  createTodo: GraphQL.mutationField({
+    input: CreateTodoInput,
+    output: Todo,
+    nonNull: true,
+    resolve: (_root, args) =>
+      Effect.gen(function* () {
+        const store = yield* TodoStore
+        const cu = yield* CurrentUser
+        return yield* store.create({
+          title: args.input.title,
+          ownerId: cu.id,
+        })
+      }),
   }),
+  deleteTodo: GraphQL.mutationField({
+    args: { id: Schema.String },
+    output: GraphQL.ID,
+    nonNull: true,
+    resolve: (_root, args) =>
+      Effect.gen(function* () {
+        const store = yield* TodoStore
+        // Wire id is the global id — strip the typename before hitting
+        // the store. parseGlobalId throws on malformed input; the throw
+        // surfaces as a GraphQL field error.
+        const { id: rawId } = GraphQL.parseGlobalId(args.id)
+        yield* store.delete(rawId)
+        return GraphQL.deletedId("Todo", rawId)
+      }),
+  }),
+})
+
+// ---- Compose Schema + per-request Layer ---------------------------
+
+const SchemaLayer = Layer.mergeAll(
+  UserNode,
+  TodoNode,
+  ViewerLayer,
+  QueryLayer,
+  MutationLayer,
 )
 
-const runtime = ManagedRuntime.make(TodoStoreLive)
-const schema  = b5.toSchema(runtime)
-
-// Per-request Layer — receives HttpServerRequest, produces CurrentUser.
 const RequestLayer = Layer.effect(CurrentUser)(
   Effect.gen(function* () {
     const req = yield* HttpServerRequest.HttpServerRequest
-    const id  = req.headers["x-user-id"] ?? "anonymous"
+    const id = req.headers["x-user-id"] ?? "anonymous"
     return CurrentUser.of({ id })
   }),
 )
 
-const app = toHttpApp(schema, { requestContext: RequestLayer })
+// ---- Bun.serve bridge ---------------------------------------------
 
-// Bun.serve bridge.
+const runtime = ManagedRuntime.make(TodoStoreLive)
+const app = GraphQL.toHttpApp(SchemaLayer, {
+  runtime,
+  requestContext: RequestLayer,
+})
+
 Bun.serve({
   port: 4000,
   async fetch(request) {
+    const url = new URL(request.url)
+    if (url.pathname !== "/graphql") {
+      return new Response("Not found", { status: 404 })
+    }
     const req = HttpServerRequest.fromWeb(request)
     const provided = Effect.provide(
       app,
@@ -309,95 +430,70 @@ Bun.serve({
 Send a query:
 
 ```bash
-curl -s http://localhost:4000/graphql \
+curl -s -X POST http://localhost:4000/graphql \
   -H 'content-type: application/json' \
   -H 'x-user-id: ada' \
-  -d '{"query":"{ viewer { id } }"}'
-# {"data":{"viewer":{"id":"ada"}}}
+  -d '{"query":"{ viewer { user { id } todos(first: 10) { edges { cursor node { title completed } } } } }"}'
 ```
 
-### GraphiQL explorer
+Open `http://localhost:4000/graphql` in a browser to load GraphiQL on
+the same route via `Accept: text/html` content negotiation.
 
-Open `http://localhost:4000/graphql` in a browser and the GraphiQL IDE is
-served from the same route via `Accept: text/html` content negotiation.
-Programmatic clients sending `Accept: application/json` execute as
-normal — there is no separate `/graphiql` path to mount.
+## Resolvers
 
-```ts
-toHttpApp(schema, { graphiql: false })                              // off
-toHttpApp(schema, { graphiql: { title: "My API",
-                                defaultQuery: "{ viewer { id } }" } })
-```
+### Three field forms
 
-The page loads GraphiQL 3.x and React 18 from `unpkg.com` at request
-time — no extra dependencies are added to your project.
+A field inside a `Node.layer(...)` or `Viewer.layer(...)` `fields:`
+block can take three shapes. Pick the simplest one that fits.
 
-### Persisted queries
-
-`relay-compiler --persist-output queryMap.json` emits a static
-`{ hash → queryText }` map at build time. The Relay client sends only
-the hash on the wire, and the server allowlists by construction — only
-pre-built queries can run in production.
+**1. Bare schema — passthrough.** When the GraphQL field name matches
+a property on the parent and you want the value as-is:
 
 ```ts
-import queryMap from "./queryMap.json" with { type: "json" }
-
-toHttpApp(schema, {
-  persistedQueries: {
-    store: new Map(Object.entries(queryMap)),
-    required: process.env.NODE_ENV === "production",
-  },
+fields: (_f) => ({
+  title: Schema.String,           // resolver: parent => parent.title
+  completed: Schema.Boolean,      // resolver: parent => parent.completed
 })
 ```
 
-| Request                  | `required: false` (default)        | `required: true`                  |
-|--------------------------|------------------------------------|-----------------------------------|
-| Hash hits the store      | Execute the resolved query         | Execute the resolved query        |
-| Hash misses              | 200, `PERSISTED_QUERY_NOT_FOUND`   | 200, `PERSISTED_QUERY_NOT_FOUND`  |
-| No hash, ad-hoc `query`  | Execute the ad-hoc query (dev)     | 400, `PERSISTED_QUERY_REQUIRED`   |
+This is the form most fields take. The default resolver reads
+`parent[fieldName]` and runs the value through the Schema's encoder.
 
-The wire format defaults to `{"doc_id": ..., "variables": ...}`,
-matching Relay's network-layer example. Set `persistedQueries.field` to
-`"id"` or `"documentId"` to match your client.
-
-`store` accepts any `{ get(hash): string | undefined }` object — a
-plain `Map`, a Redis-backed cache, a lazy loader, or any custom lookup.
-
-### Opt-in BFS executor
-
-graphql-js's default executor walks queries depth-first; sibling
-subtrees launch their first resolver call at slightly different
-microtask ticks, defeating batching layers that depend on "everything
-in flight at the same time". Effect's `Request` / `RequestResolver`
-auto-batches every request submitted in the same concurrent region —
-which only collapses to a single round-trip when all the fields at a
-level start in one tick.
-
-The BFS executor is a level-order scheduler: every field at a given
-depth runs concurrently, making the level the natural batching window.
+**2. Pipe-resolver — Effect-native shorthand.** When you want to
+compute the field but do not need args, nullability overrides, or a
+description:
 
 ```ts
-toHttpApp(schema, { executor: "bfs" })   // opt-in
-toHttpApp(schema)                        // default — graphql-js
+fields: (_f) => ({
+  displayName: Schema.String.pipe(
+    GraphQL.resolve((u) => `${u.firstName} ${u.lastName}`),
+  ),
+})
 ```
 
-It ships behind a parity test against the default for ~30
-representative queries (scalars, lists, fragments, interfaces / unions,
-abstract types, `@skip` / `@include`, errors, variables, aliases). See
-[`src/executor-bfs.parity.test.ts`](./src/executor-bfs.parity.test.ts).
+The function inside `GraphQL.resolve` receives the parent (typed by
+the surrounding `Node.layer(T)`) and returns a value or an Effect.
 
-Limitations: subscriptions are not supported (use `toWebSocketApp`);
-`@defer` / `@stream` are not supported (rolled with the
-multipart/mixed transport — T21).
-
-You can also call it directly without the HTTP layer:
+**3. `f(type, options)` — the field helper.** When you need args,
+custom output type, nullability, or a description:
 
 ```ts
-import { executeBfs } from "@athanor/alembic"
-const result = await executeBfs({ schema, document, contextValue, variableValues })
+fields: (f) => ({
+  posts: f(GraphQL.Connection(Post), {
+    resolve: (user, args) => loadPosts(user.id, args),
+  }),
+  byEmail: f(User, {
+    args: { email: Schema.String },
+    resolve: (_parent, args) => findUserByEmail(args.email),
+  }),
+})
 ```
 
-## Resolvers
+`f` is a parent-bound version of the top-level `field()` helper —
+inside `Node.layer(User)`, `f` is `FieldHelper<User>`, so resolver
+parameters are inferred without annotations. The pagination
+overload — `f(Connection(T), { resolve })` — auto-types `args` as
+`{ first?: number; after?: string; last?: number; before?: string }`.
 
 ### Two-tier context
 
@@ -406,389 +502,254 @@ structurally separate to avoid the most common source of confusion.
 
 | Tier | Lifetime | Source | Examples |
 |---|---|---|---|
-| Server-scoped (`R`) | Process lifetime | `ManagedRuntime<R>` from a startup `Layer<R>`. Passed to `toSchema(runtime)`. | DB pool, config, caches |
-| Per-request (`ReqR`) | One HTTP request | `Layer<ReqR, E, HttpServerRequest>` passed as `toHttpApp`'s `requestContext` option. | `currentUser`, `requestId`, span |
+| Server-scoped (`R`) | Process lifetime | `ManagedRuntime<R>` from a startup `Layer<R>`. Passed to `toHttpApp` as `runtime`. | DB pool, config, caches |
+| Per-request (`ReqR`) | One HTTP request | `Layer<ReqR, never, HttpServerRequest>` passed to `toHttpApp` as `requestContext`. | `currentUser`, `requestId`, span |
 
-A resolver requires the union of both:
+A resolver may yield from both tiers freely:
 
 ```ts
-resolve: (parent, args, ctx, info) =>
+resolve: (parent, args) =>
   Effect.gen(function* () {
-    const db   = yield* Database     // server-scoped
-    const self = yield* CurrentUser  // per-request
+    const db = yield* Database         // server-scoped
+    const self = yield* CurrentUser    // per-request
     return yield* db.findUser(self.id)
   })
 ```
 
-The `R` parameter on `SchemaBuilder<R>` accumulates the union of every
-service any resolver yields. `toSchema(runtime)` discharges the
-server-scoped slice from `R` and returns a `TypedGraphQLSchema<ReqR>`
-where `ReqR` is the residual per-request services. `toHttpApp` then
-demands a `requestContext` Layer that provides exactly that residual.
-There are no casts.
+`Layer.mergeAll(...)` accumulates the union of all resolver
+requirements at the type level. `toHttpApp` then expects a `runtime`
+that covers some subset `RA ⊆ R` and a `requestContext` Layer that
+covers the residual `Exclude<R, RA>`. There are no casts on the user
+side.
 
 ### Typed errors
 
 `Data.TaggedError` instances yielded from a resolver surface as
 GraphQL errors carrying the error's `message`. Defects (unexpected
-throws, `Effect.die`) are masked as a generic internal server error to
-avoid leaking implementation details.
+throws, `Effect.die`) are masked as a generic internal server error
+to avoid leaking implementation details.
 
 ```ts
 class NotFound extends Data.TaggedError("NotFound")<{
   readonly id: string
 }> {}
 
-resolve: (_p, { id }) =>
+resolve: (_p, args) =>
   Effect.gen(function* () {
-    const db = yield* Database
-    const u  = yield* db.findUser(id)
-    if (u === null) return yield* new NotFound({ id })
+    const u = yield* db.findUser(args.id)
+    if (u === null) return yield* new NotFound({ id: args.id })
     return u
   })
 ```
 
 For richer error patterns — returning `null` plus a sibling
 `userErrors` field, for instance — use `Effect.catchAll` /
-`Effect.catchTag` inside the resolver. The builder does not impose a
-particular error envelope shape.
+`Effect.catchTag` inside the resolver. The framework does not impose
+a particular envelope shape.
 
 ### Nullability — wire vs semantic
 
-GraphQL output fields are nullable by default; opt into non-null
-per-field with `nonNull: true`.
-
-```ts
-fields: () => ({
-  name: { type: scalars.String, nonNull: true, resolve: ... }, // String!
-  bio:  { type: scalars.String,                resolve: ... }, // String
-})
-```
-
-This is about **error propagation**, not about whether data exists:
-
-- A nullable field whose resolver fails is replaced with `null` and
-  the error is appended to the response's `errors` array.
-- A non-null field whose resolver fails bubbles to the nearest
-  nullable ancestor, potentially nulling a large subtree.
-
-Nullable-by-default favors partial-response resilience.
-
-`@semanticNonNull` exists to recover the "this field is semantically
-non-null" information for tooling without forcing wire non-null. The
-directive is declared on every @athanor/alembic schema. T17 lands the
-auto-emit pass that infers `@semanticNonNull` from non-nullable Effect
-Schemas paired with wire-nullable fields.
-
-> **Sidebar — Effect Schema TS types and GraphQL wire nullability are
-> orthogonal.** `Schema.String` decodes to `string`, not `string |
-> null`. That describes the type a resolver returns *on the success
-> path*. Whether a resolver *failure* nulls the field is a separate
-> GraphQL contract expressed via `nonNull`. Most users conflate these
-> the first time. Don't.
-
-### Argument validation
-
-Args are validated against an Effect Schema before the resolver runs.
-Arg schemas must be synchronous (`RD = never`); failures throw a
-`GraphQLError` with the validation message before the resolver is
-invoked.
-
-```ts
-fields: () => ({
-  byEmail: {
-    type: UserRef,
-    args: {
-      email: { schema: Schema.String.pipe(Schema.pattern(/.+@.+/)) },
-    },
-    resolve: (_p, args: { email: string }) =>
-      Effect.gen(function* () {
-        const db = yield* Database
-        return yield* db.findByEmail(args.email)
-      }),
-  },
-})
-```
-
-For named, reusable input objects, register one with `builder.input()`
-and reference it from `args`:
-
-```ts
-const { ref: CreateTodoInput, builder: b1 } = b0.input(
-  "CreateTodoInput",
-  Schema.Struct({ title: Schema.String }),
-)
-
-// then:
-fields: () => ({
-  createTodo: {
-    type: TodoRef,
-    nonNull: true,
-    args: { input: CreateTodoInput },
-    resolve: (_p, args: { input: { title: string } }) => /* ... */,
-  },
-})
-```
-
-`builder.input` annotates the schema with `identifier: "CreateTodoInput"`
-so the schema bridge names and dedupes the resulting
-`GraphQLInputObjectType`.
-
-## Relay built-ins
-
-Produced automatically; you do not register or import them.
-
-- **`Node` interface** — present on the schema; every type registered
-  with `builder.node()` implements it.
-- **`id: ID!`** — added to every node type. Wire value:
-  `base64(typename + ":" + rawId)`. `loadOne(id, ctx)` receives the raw
-  id with the typename stripped.
-- **Top-level `node(id: ID!): Node`** — decodes the global id,
-  dispatches to the matching `loadOne`, sets `__typename` on the
-  returned object so graphql-js can resolve the abstract type.
-- **Top-level `nodes(ids: [ID!]!): [Node]`** — batched form. Order
-  preserved; unknown ids become `null` at the same index. Auto-added
-  alongside `node(id:)` when at least one node type is registered.
-- **`Connection` / `Edge`** — produced by `builder.connection(nodeRef)`.
-  `edges: [Edge]!` (list non-null; entries nullable for deletion
-  semantics), `pageInfo: PageInfo!`, `cursor: String!`, `node`
-  nullable.
-- **`PageInfo`** — `{ hasNextPage: Boolean!, hasPreviousPage: Boolean!,
-  startCursor: String, endCursor: String }`.
-- **Connection args** — `first` / `last` / `after` / `before` injected
-  onto every connection field; auto-typed in resolver `args`.
-
-The relay non-null rules above are baked in per spec; they are not
-derived from your `nonNull` flags.
-
-What is **not** included:
-
-- No `clientMutationId`. Modern Relay does not require it.
-- No `Input` / `Payload` mutation envelopes. Write them yourself with
-  `objectType` and `input` if you want them.
-
-### Mutations & connection updates
-
-Relay's declarative mutation directives — `@deleteRecord`,
-`@deleteEdge`, `@appendEdge` / `@prependEdge`, `@appendNode` /
-`@prependNode` — keep the client store in sync after a mutation with
-no manual `updater`. They are client-side, but the **shape of the
-mutation field's return type** is what they bind against. Wrong shape
-→ silent no-op → ghost rows until the next refetch. This is the most
-common Relay mutation footgun.
-
-| Directive                     | Field returns       | Extra args                                    |
-| ----------------------------- | ------------------- | ---------------------------------------------- |
-| `@deleteRecord`               | `ID` / `ID!`        | —                                              |
-| `@deleteEdge`                 | `ID` / `[ID!]!`     | `connections: [ID!]!`                          |
-| `@appendEdge` / `@prependEdge`| The Edge type       | `connections: [ID!]!`                          |
-| `@appendNode` / `@prependNode`| The Node type       | `connections: [ID!]!`, `edgeTypeName: String!` |
-
-Two helpers make resolver intent explicit:
-
-```ts
-import { connectionEdge, deletedId } from "@athanor/alembic"
-
-// @deleteRecord — return the deleted record's global id.
-return { deletedPostId: deletedId("Post", post.id) }
-
-// @appendEdge / @prependEdge — return an Edge, not a Node.
-return { feedbackCommentEdge: connectionEdge(comment.id, comment) }
-```
-
-Two ergonomics helpers eliminate ref boilerplate when wiring these
-payloads:
-
-```ts
-import { list, scalars } from "@athanor/alembic"
-
-// builder.connection(NodeRef) returns a ConnectionRef whose `edgeRef` is
-// pre-built — no manual NamedOutputRef.
-const { ref: CommentConnRef } = b0.connection(CommentRef)
-// CommentConnRef.edgeRef is the CommentEdge ref.
-
-// list(ref, { itemNonNull: true }) builds [ID!]; nonNull on the field
-// wraps to [ID!]!.
-{
-  type: list(scalars.ID, { itemNonNull: true }),
-  nonNull: true,
-}
-```
-
-See [`docs/RELAY_MUTATIONS.md`](./docs/RELAY_MUTATIONS.md) for the full
-server-and-client walkthrough.
-
-## Semantic non-nullability
-
-> **The headline feature.** Wire stays nullable for resilience; client TypeScript types come back non-null.
-
 GraphQL nullability is two questions, not one:
 
-1. **Wire**: can the server legitimately respond with `null` here?
+1. **Wire**: can the server respond with `null` here?
 2. **Semantic**: when the resolver succeeds, is `null` a valid value?
 
 Idiomatic Relay servers answer **yes** to (1) — partial-response
 resilience: a single field error nulls one field instead of bubbling
-up and tanking the whole query. They answer **no** to (2) — when the
+up and tanking a large subtree. They answer **no** to (2) — when the
 resolver returns successfully, the value is meaningful and present.
 
-Most GraphQL servers conflate the two. `@athanor/alembic` separates
-them:
+@athanor/alembic separates the two:
 
 - **Wire is nullable by default.** Every field is `T` (not `T!`)
   unless you set `nonNull: true`. Field-level errors land as `null`
   with a typed entry in `errors[]`; the rest of the response still
   arrives.
-- **Semantic non-nullability is auto-derived.** Effect Schema
-  resolver returns are non-null unless you wrap them in
-  `Schema.NullOr`. So every wire-nullable field is automatically
-  emitted with `@semanticNonNull` — there is no per-field opt-in.
+- **`@semanticNonNull` is auto-derived.** The framework reads the
+  Effect Schema attached to each field. If the schema's `Type` is
+  non-null (the default — only `Schema.NullOr(...)` produces
+  null-on-success) and the wire is nullable, the field is emitted
+  with `@semanticNonNull` automatically. There is no per-field
+  opt-in.
 
 The payoff lands on the Relay client. With `@throwOnFieldError` on
 the operation, Relay v18+ reads `@semanticNonNull` and generates
-**non-null TypeScript types** for the affected positions:
-
-```ts
-// Server-side resolver
-{
-  name: {
-    type: scalars.String,                 // wire: String  (nullable)
-    resolve: () => Effect.succeed("ok"),  // success: string (non-null)
-  },
-}
-```
+non-null TypeScript types for the affected positions:
 
 ```graphql
-# Generated SDL (printSchemaWithDirectives output)
 type User {
-  name: String @semanticNonNull
-}
-```
-
-```graphql
-# Client query — opt into the typed-error semantics:
-query UserQuery @throwOnFieldError {
-  user { name }
+  name: String @semanticNonNull        # wire-nullable, semantic-non-null
 }
 ```
 
 ```ts
-// Relay-generated TS — name is `string`, NOT `string | null | undefined`:
+// Relay-generated TS — `name` is `string`, not `string | null | undefined`.
 const data = useFragment(...)
-data.user.name.length  // ✓ no narrowing required
+data.user.name.length
 ```
 
-Without the directive, every field on the client comes back
-`T | null | undefined` because the wire is nullable. With it, fields
-that the server promises will succeed-or-throw return `T`.
+If a field genuinely returns `null` on success — a viewer that may
+not be logged in, for example — wrap its Schema in `Schema.NullOr`
+and the auto-emit pass leaves the directive off.
 
-### Auto-emit policy
+### Argument validation
 
-The framework decides per field, with no flag to flip:
-
-| Wire shape       | `@semanticNonNull` emitted as     |
-| ---------------- | --------------------------------- |
-| `String`         | `@semanticNonNull` (default `[0]`)|
-| `String!`        | — (wire-non-null is stronger)     |
-| `[String]`       | `@semanticNonNull(levels: [0, 1])`|
-| `[String!]`      | `@semanticNonNull` (default `[0]`)|
-| `[String]!`      | `@semanticNonNull(levels: [1])`   |
-| `[String!]!`     | —                                 |
-
-`levels` indexes list depth: `0` is the outermost type, `1` is the
-list item, `2` is an item of an item, etc. Every wire-nullable
-position contributes a level.
-
-### Opt-out (rare)
-
-If a field genuinely returns `null` on success — e.g. a viewer that
-may not be logged in — set `semanticNonNull: false`:
+Arg schemas validate inputs before the resolver runs. Failures throw
+a `GraphQLError` with the validation message; the resolver is never
+invoked.
 
 ```ts
-{
-  currentUser: {
-    type: UserRef,            // nullable on the wire (default)
-    semanticNonNull: false,   // …and nullable in TS, too
-    resolve: (_, __, ctx) =>
-      ctx.get(CurrentUser).pipe(Effect.option),
+f(User, {
+  args: {
+    email: Schema.String.pipe(Schema.pattern(/.+@.+/)),
   },
-}
-```
-
-### Printing the SDL
-
-`graphql-js`'s `printSchema` strips applied directives. Use
-`printSchemaWithDirectives` from `@athanor/alembic` to emit SDL that
-preserves `@semanticNonNull` so `relay-compiler` can pick it up:
-
-```ts
-import { printSchemaWithDirectives } from "@athanor/alembic"
-
-await Bun.write("schema.graphql", printSchemaWithDirectives(schema))
-```
-
-Point `relay-compiler`'s `schema` config at that file.
-
-## Standard scalars
-
-Every @athanor/alembic schema bundles a small library of standard custom
-scalars. These are baked in — there is no `builder.scalar(...)`
-boilerplate to write, and they are present in introspection (and therefore
-in the printed SDL) on every server you build, even when no field
-references them. This is part of the zero-config Relay positioning: a
-Relay client configured with the matching `customScalarTypes` works
-against every @athanor/alembic server out of the box.
-
-| Scalar         | TS type   | Wire   | Notes                              |
-| -------------- | --------- | ------ | ---------------------------------- |
-| `DateTime`     | `Date`    | string | ISO-8601 timestamp                 |
-| `Date`         | `Date`    | string | ISO calendar date `YYYY-MM-DD`     |
-| `JSON`         | `unknown` | any    | passes JSON through unchanged      |
-| `URL`          | `URL`     | string | parses to a `URL` instance         |
-| `UUID`         | `string`  | string | RFC 4122, validated                |
-| `BigInt`       | `bigint`  | string | stringified for JSON safety        |
-| `EmailAddress` | `string`  | string | RFC 5322-light validation          |
-
-Names follow the
-[graphql-scalars](https://the-guild.dev/graphql/scalars) convention.
-
-Use them as field types via the `scalars` namespace — no separate import:
-
-```ts
-import { Effect } from "effect"
-import { createBuilder, scalars } from "@athanor/alembic"
-
-const b = createBuilder().queryType({
-  fields: () => ({
-    serverTime: {
-      type: scalars.DateTime,
-      nonNull: true,
-      resolve: () => Effect.succeed(new Date()),
-    },
-  }),
+  resolve: (_p, args) => loadByEmail(args.email),
 })
 ```
 
-For input args / `builder.input(...)`, the matching Effect Schema codecs
-are exported under `standardSchemas`:
+Mutations get a structured-input shorthand: pass a
+`Schema.Class<Input>` to `mutationField({ input: ... })` and the
+resolver's `args.input` is typed as the class instance:
 
 ```ts
-import { standardSchemas } from "@athanor/alembic"
+class CreateTodoInput extends Schema.Class<CreateTodoInput>(
+  "CreateTodoInput",
+)({ title: Schema.String }) {}
 
-// args: { since: { schema: standardSchemas.dateTime } }
-// args: { id:    { schema: standardSchemas.uuid     } }
+GraphQL.mutationField({
+  input: CreateTodoInput,
+  output: Todo,
+  nonNull: true,
+  resolve: (_root, args) => store.create({ title: args.input.title }),
+})
 ```
 
-### Relay client configuration
+The class's static identifier becomes the GraphQL input type name.
 
-Add the matching `customScalarTypes` block to `relay.config.js` so the
-Relay compiler emits correct TS types for every server in the ecosystem:
+## Relay built-ins
+
+Produced automatically; you do not register or import them.
+
+- **`Node` interface** — present on every schema; each
+  `Node.layer(T)` type implements it.
+- **`id: ID!`** — auto-synthesized on every node type from the
+  Schema.Class's `id` property. Wire value:
+  `base64(typename + ":" + rawId)`. `load(id)` receives the raw id.
+- **Top-level `node(id: ID!): Node`** — decodes the global id,
+  dispatches to the matching `load`, sets `__typename` on the
+  returned object so graphql-js can resolve the abstract type.
+- **Top-level `nodes(ids: [ID!]!): [Node]`** — batched form. Order
+  preserved; unknown ids become `null` at the same index.
+- **`Connection` / `Edge` / `PageInfo`** — produced on demand the
+  first time a field references `GraphQL.Connection(T)`. Field names
+  and nullability follow the spec.
+- **Connection args** — `first` / `last` / `after` / `before`
+  injected onto every connection field; auto-typed in resolver `args`
+  via the `Connection(T)` overload on `field`, `f`, and `queryField`.
+
+What is **not** included:
+
+- No `clientMutationId`. Modern Relay does not require it.
+- No `Input` / `Payload` mutation envelopes. Compose the shape you
+  want with `mutationField({ input, output, ... })`.
+
+### Mutations & connection updates
+
+Relay's declarative mutation directives — `@deleteRecord`,
+`@deleteEdge`, `@appendEdge` / `@prependEdge`, `@appendNode` /
+`@prependNode` — keep the client store in sync after a mutation
+without a manual `updater`. They are client-side, but the **shape of
+the mutation field's return type** is what they bind against. Wrong
+shape → silent no-op → ghost rows until the next refetch.
+
+`GraphQL.deletedId(typename, rawId)` and `GraphQL.edgePayload(cursor,
+node)` exist to make resolver intent explicit:
+
+```ts
+// @deleteRecord — return the deleted record's global id.
+return GraphQL.deletedId("Post", post.id)
+
+// @appendEdge / @prependEdge — return an Edge, not a Node.
+return GraphQL.edgePayload(cursor, comment)
+```
+
+See [`docs/RELAY_MUTATIONS.md`](./docs/RELAY_MUTATIONS.md) for the
+full server-and-client walkthrough.
+
+## Viewer
+
+The `viewer` field is the standard Relay session root — the entry
+point for everything scoped to the logged-in user. Declare it with
+`GraphQL.Viewer.layer({...})`:
+
+```ts
+const ViewerLayer = GraphQL.Viewer.layer({
+  fields: (f) => ({
+    user: f(User, {
+      resolve: (v) => Effect.succeed(new User({ id: v.userId })),
+    }),
+    todos: f(GraphQL.Connection(Todo), {
+      resolve: (v, args) => loadTodos(v.userId, args),
+    }),
+    notifications: f(GraphQL.Connection(Notification), {
+      resolve: (v, args) => loadNotifications(v.userId, args),
+    }),
+  }),
+  resolve: () =>
+    Effect.gen(function* () {
+      const cu = yield* CurrentUser
+      return { userId: cu.id }
+    }),
+})
+```
+
+This registers `Query.viewer: Viewer` and synthesizes
+`type Viewer { user: User, todos: TodoConnection, notifications:
+NotificationConnection }`. The `resolve:` thunk runs once per
+request; its return value is the `parent` of every field under
+`Viewer`. Pick whatever session-scoped shape your app needs.
+
+**Viewer is a framework-owned type.** Its GraphQL shape is
+`type Viewer { ...userFields }` — not `type Viewer implements Node`.
+Relay's `@refetchable` on viewer fragments re-calls `Query.viewer`,
+never `node(id:)`, so a global id on Viewer would be unused weight.
+Domain ids live on `viewer.user`, `viewer.todos.edges[].node`, etc.,
+each of which *is* a Node. Verified against Relay's
+[`viewer_query_generator`](https://github.com/facebook/relay/blob/main/compiler/crates/relay-transforms/src/refetchable_fragment/refetchable_fragment_generator.rs)
+and the test schemas in
+[`relay-test-utils-internal`](https://github.com/facebook/relay/tree/main/packages/relay-test-utils-internal).
+
+**One viewer per schema.** If two `Viewer.layer` registrations are
+merged into the same `Layer.mergeAll`, the schema build fails with a
+clear error.
+
+## Custom scalars via Effect Schema
+
+`GraphQL.Scalar(name, schema)` declares a custom scalar from any
+Effect `Schema.Codec` whose encoded side is `string | number |
+boolean`. The codec runs in both directions: decoding incoming
+literals and variables, encoding outgoing values.
+
+```ts
+const DateScalar = GraphQL.Scalar("Date", Schema.DateFromString)
+```
+
+Use the scalar via the field helper:
+
+```ts
+fields: (f) => ({
+  createdAt: f(DateScalar),
+})
+```
+
+The standard scalars listed in [What's baked in](#whats-baked-in) —
+`DateTime`, `Date`, `JSON`, `URL`, `UUID`, `BigInt`, `EmailAddress` —
+ship pre-registered, so this declaration is unnecessary for the
+common cases. Relay clients pick them up via `customScalarTypes`:
 
 ```js
+// relay.config.js
 module.exports = {
-  src: "./src",
-  schema: "./schema.graphql",
-  language: "typescript",
   customScalarTypes: {
     DateTime: "string",
     Date: "string",
@@ -801,65 +762,36 @@ module.exports = {
 }
 ```
 
-## Custom scalars via Effect Schema
-
-Custom scalars are declared with `builder.scalar(name, { schema })`,
-where `schema` is a `Schema.Codec` whose encoded side is `string |
-number | boolean`. The codec runs in both directions: decoding incoming
-literals/variables, encoding outgoing values.
-
-```ts
-import { Schema, SchemaGetter } from "effect"
-
-const DateFromIsoString = Schema.declare<Date>(
-  (u): u is Date => u instanceof Date,
-).pipe(
-  Schema.encodeTo(Schema.String, {
-    decode: SchemaGetter.transform((s: string) => new Date(s)),
-    encode: SchemaGetter.transform((d: Date)   => d.toISOString()),
-  }),
-)
-
-const { ref: DateScalar, builder: b1 } = b0.scalar("Date", {
-  schema: DateFromIsoString,
-})
-```
-
-`DateScalar` is then a usable field `type`. Decoding errors during
-parsing surface as `GraphQLError`s with the schema's failure message.
-
-T24 will ship `DateTime`, `Date`, `JSON`, `URL`, `UUID`, `BigInt`, and
-`EmailAddress` as automatically-registered standard scalars so this
-declaration is unnecessary for the common cases. Until then, declare
-them per-app.
-
 ## Subscriptions
 
 Subscription resolvers express results as `Stream.Stream<A, E, R>`.
 The `graphql-transport-ws` subprotocol is implemented over a Bun
-WebSocket handler returned by `toWebSocketApp(schema, options)`.
+WebSocket handler returned by `GraphQL.toWebSocketApp(SchemaLayer,
+runtime, options)`.
 
 ```ts
-import { GraphQL, createBuilder } from "@athanor/alembic"
 import { Effect, Stream } from "effect"
 
-const b3 = b2.subscriptionType({
-  fields: () => ({
-    postAdded: {
-      type: postRef,
-      subscribe: () =>
-        Stream.tick("5 seconds").pipe(
-          Stream.mapEffect(() => loadLatestPost()),
-        ),
-    },
+const SubscriptionLayer = GraphQL.Subscription.layer({
+  postAdded: GraphQL.subscriptionField(Post, {
+    stream: () =>
+      Stream.tick("5 seconds").pipe(
+        Stream.mapEffect(() => loadLatestPost()),
+      ),
   }),
 })
 
-const schema = b3.toSchema(runtime)
-const ws = GraphQL.toWebSocketApp(schema, {
+const SchemaLayer = Layer.mergeAll(
+  UserNode,
+  PostNode,
+  QueryLayer,
+  SubscriptionLayer,
+)
+
+const ws = GraphQL.toWebSocketApp(SchemaLayer, runtime, {
   // Authenticate the connection. `payload` is `connection_init.payload`.
   // Failure closes the socket with 4401.
-  onConnect: (payload, req) =>
+  onConnect: (payload) =>
     Effect.gen(function* () {
       const token = (payload as { token?: string }).token
       const user = yield* verifyToken(token)
@@ -884,13 +816,10 @@ Behavior:
   for each yielded value.
 - Queries and mutations also work over the WebSocket (per spec): a
   single `next` followed by `complete`.
-- Client `complete` cancels the underlying fiber via
-  `iterator.return()`, cascading to any `Stream.ensuring(...)` cleanup.
-- Connection close cancels every in-flight subscription on that socket.
-- `ping` / `pong` heartbeats are honored.
-- Subprotocol negotiation rejects everything but
-  `graphql-transport-ws`. The legacy `subscriptions-transport-ws` is
-  intentionally unsupported, matching Relay.
+- Client `complete` cancels the underlying fiber; cascading cleanup
+  via `Stream.ensuring(...)` runs.
+- Connection close cancels every in-flight subscription on that
+  socket.
 
 ## Comparisons
 
@@ -898,142 +827,67 @@ The libraries below are good libraries. Choose by where you want to
 spend your complexity budget.
 
 **vs Pothos.** General-purpose, plugin-rich, builder-style. To get
-Relay-idiomatic behavior you write or pick a Relay plugin and wire it.
-Effect support is a bolt-on. Pothos is the right call if your stack is
-Promise-based and your needs map cleanly to existing plugins.
+Relay-idiomatic behavior you write or pick a Relay plugin and wire
+it. Effect support is a bolt-on. Pothos is the right call if your
+stack is Promise-based and your needs map cleanly to existing
+plugins.
 
 **vs Nexus / GraphQL Yoga.** Code-first or HTTP-focused but agnostic
 to the schema's shape. Relay conventions are configuration on top.
-@athanor/alembic inverts that: the conventions are the framework, your
-domain is the configuration.
+@athanor/alembic inverts that: the conventions are the framework,
+your domain is the configuration.
 
 **vs `graphql-relay-js` + raw `graphql-js`.** Lower-level building
 blocks. You write the `globalIdField`, the `connectionDefinitions`,
 the directive declarations, the persisted-query store, the GraphiQL
 mount, and the resolver-context plumbing yourself. @athanor/alembic
-*compiles down to* `GraphQLSchema` — anything raw graphql-js can do is
-reachable through the lowered schema — but the ergonomics gap is the
-gap.
-
-**vs `@athanor/alembic`.** That's us. Zero-config Relay-idiomatic,
-Effect-native execution.
-
-## Relay client directives — full list
-
-`relay-compiler` refuses to compile any operation that uses a
-directive the server schema does not declare. Every Relay client
-directive is therefore baked into every schema produced — no opt-in,
-no flag.
-
-| Category | Directives |
-| --- | --- |
-| Error handling | `@required(action: RequiredFieldAction!)`, `@throwOnFieldError`, `@catch(to: CatchFieldTo! = RESULT)` |
-| Connection / pagination | `@connection`, `@stream_connection`, `@refetchable(queryName: String!, ...)` |
-| Fragment composition | `@inline`, `@no_inline`, `@relay`, `@alias`, `@dangerously_unaliased_fixme` |
-| Connection mutations | `@appendEdge`, `@prependEdge`, `@appendNode`, `@prependNode`, `@deleteEdge`, `@deleteRecord` |
-| Incremental delivery | `@defer(label: String!, if: Boolean = true)`, `@stream(label: String!, initialCount: Int!, if: Boolean = true, useCustomizedBatch: Boolean = false)` |
-| 3D | `@match(key: String)`, `@module(name: String!)` |
-| Semantic | `@semanticNonNull(levels: [Int] = [0])` |
-| Misc | `@waterfall`, `@raw_response_type`, `@updatable`, `@assignable`, `@fetchable(field_name: String)`, `@prefer_fetchable` |
-
-graphql-js's `specifiedDirectives` (`@skip`, `@include`, `@deprecated`,
-`@specifiedBy`) are preserved alongside the Relay set.
-
-The runtime semantics for every directive above live in
-`relay-compiler` and the Relay client. The server's job is to declare
-them so graphql-js's validator accepts operations that use them.
-Connection-mutation directives like `@appendEdge` rely on the *shape*
-of your mutation field's return type — see
-[Mutations & connection updates](#mutations--connection-updates).
-
-If you want to add your *own* directives on top, pass `extraDirectives`
-to `lower()`:
-
-```ts
-import { GraphQLDirective, DirectiveLocation } from "graphql"
-import { getIR, lower } from "@athanor/alembic"
-
-const myDir = new GraphQLDirective({
-  name: "my_custom",
-  locations: [DirectiveLocation.FIELD],
-})
-
-const schema = lower(getIR(builder), runtime, { extraDirectives: [myDir] })
-```
-
-The Relay set is non-negotiable. `extraDirectives` does not displace
-it.
-
-A `matchable(ref)` helper is re-exported as a marker for 3D usage: it
-returns its argument unchanged and exists only to document that a
-union/interface ref is intended for `@match`. Abstract-type resolution
-(`__typename` / `resolveType`) is wired up by `lower()` for
-`Node`-implementing types. End-to-end 3D also needs `relay-compiler`
-configured client-side; see the
-[Relay 3D example](https://github.com/relayjs/relay-examples/tree/main/data-driven-dependencies)
-for the loader scaffolding (`JSResource`, `MatchContainer`, etc.).
+*compiles down to* `GraphQLSchema` — anything raw graphql-js can do
+is reachable through the lowered schema — but the ergonomics gap is
+the gap.
 
 ## Roadmap
 
 **Now (v1):**
 
-- T17 — `@semanticNonNull` auto-emit from non-nullable Effect Schemas.
-- T22 — typed mutation error union helper.
-- T24 — standard scalar library (DateTime, Date, JSON, URL, UUID,
-  BigInt, EmailAddress).
-- T27 — build-time schema linter for Relay footguns.
+- T27 — build-time schema linter for Relay footguns (in flight).
+- T38 — performance benchmarks: resolver throughput, BFS speedup,
+  memory (in flight).
 
 **Coming:**
 
 - T20 — server 3D: `JSDependency` scalar + per-type `js()` field.
 - T21 — `@defer` / `@stream` incremental delivery via
   `multipart/mixed`.
+- T22 — typed mutation error union helper.
 
 **v2:**
 
 - Grafast-style plan executor — plan-based execution built on
   Effect's `Request` / `RequestResolver`. Adds a `plan:` field config
   alongside `resolve:`. Eliminates N+1 by construction at the cost of
-  a planning pass and a different field-config style. Reuses the v1
-  `SchemaBuilder` and `IR`.
+  a planning pass and a different field-config style.
 
 Until then, the manual N+1 escape hatch is `Request` /
 `RequestResolver` inside resolver bodies; Effect's runtime
-auto-coalesces concurrent `Request` instances through their resolver.
+auto-coalesces concurrent `Request` instances through their
+resolver.
 
 ## Effect v4 beta
 
 This project depends on `effect@^4.0.0-beta.x`. The Effect v4 API
 differs from v3 in several places that matter here:
 
-- Services are defined with `Context.Service(key)` from `"effect"`. The
-  separate `Tag` module from v3 is gone.
-- `Schema` is part of the main `effect` package — not `@effect/schema`.
-- `effect/unstable/http` lives in the main package, not in a separate
-  `@effect/platform` install.
+- Services are defined with `Context.Service(key)` from `"effect"`.
+  The separate `Tag` module from v3 is gone.
+- `Schema` is part of the main `effect` package — not
+  `@effect/schema`.
+- `effect/unstable/http` lives in the main package, not in a
+  separate `@effect/platform` install.
 
 The public docs at effect-ts.com still describe v3 at the time of
 writing. For v4 specifics, read the type definitions in
-`node_modules/effect/` directly. This README's snippets target v4
-beta.
-
-## Built-in scalar refs
-
-`builder.scalar(name, ...)` returns a `ScalarRef` for user-defined
-scalars. The graphql-js spec built-in scalars (`String`, `Int`,
-`Float`, `Boolean`, `ID`) are exported as the `scalars` object:
-
-```ts
-import { scalars } from "@athanor/alembic"
-
-fields: () => ({
-  name: { type: scalars.String, nonNull: true, resolve: ... },
-  age:  { type: scalars.Int,    resolve: ... },
-})
-```
-
-The lowering pipeline resolves these to graphql-js's built-in scalar
-types directly.
+`node_modules/effect/dist/` directly. This README's snippets target
+v4 beta.
 
 ## License
 

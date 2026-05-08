@@ -106,6 +106,9 @@ export { matchable } from "./relay-3d.ts";
 export { lower, type LowerOptions } from "./lower.ts";
 export { executeBfs, type BfsExecuteArgs } from "./executor-bfs.ts";
 
+// Build-time schema linter (Relay anti-pattern detection).
+export { lintSchema, type LintIssue } from "./lint.ts";
+
 // Global ID helpers (encode/decode are aliased as globalId/parseGlobalId).
 export { decodeGlobalId, encodeGlobalId, InvalidGlobalIdError } from "./relay.ts";
 

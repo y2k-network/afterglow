@@ -24,6 +24,7 @@ export {
 } from "./builder.ts";
 
 export { buildSchema, toHttpApp, type ToHttpAppOptions } from "./http.ts";
+export { lintSchema, type LintIssue } from "./lint.ts";
 export { toWebSocketApp, type ToWebSocketAppOptions, type ToWebSocketAppResult } from "./ws.ts";
 
 export type {

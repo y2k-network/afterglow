@@ -44,6 +44,7 @@ import {
   type GraphQLOutputType,
   type NameNode,
 } from "graphql";
+import { emitLintWarnings, formatLintErrors, lintSchema } from "./lint.ts";
 import { relayDirectives } from "./relay-directives.ts";
 import {
   buildConnectionTypes,
@@ -85,6 +86,12 @@ const BUILTIN_SCALARS: Record<string, GraphQLOutputType> = {
 
 export interface LowerOptions {
   readonly extraDirectives?: ReadonlyArray<GraphQLDirective>;
+  /**
+   * Suppress lint warnings by code (e.g. `["RELAY-104"]`). Errors are NEVER
+   * mutable. Document narrow uses — every warning we emit corresponds to a
+   * documented Relay anti-pattern. See `src/lint.ts` for the full list.
+   */
+  readonly muteLintWarnings?: ReadonlyArray<string>;
 }
 
 export function lower<R, ReqR = unknown>(
@@ -100,6 +107,16 @@ export function lower<R, ReqR = unknown>(
       "@athanor/alembic: at least one query field is required (call GraphQL.Query.layer({ ... }) or register GraphQL.Viewer.layer({ ... }))",
     );
   }
+
+  // Run the build-time schema linter against the collected IR before any
+  // graphql-js types are constructed. Errors aggregate and throw; warnings
+  // print via console.warn (subject to muteLintWarnings) and proceed.
+  const lintIssues = lintSchema(ir);
+  const lintErrors = lintIssues.filter((i) => i.severity === "error");
+  if (lintErrors.length > 0) {
+    throw new Error(formatLintErrors(lintErrors));
+  }
+  emitLintWarnings(lintIssues, options.muteLintWarnings ?? []);
 
   const registry = new Map<string, GraphQLNamedType>();
 
