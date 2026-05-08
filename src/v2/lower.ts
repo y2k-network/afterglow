@@ -1,0 +1,621 @@
+/**
+ * V2 IR → graphql-js lowering. Reuses v1's relay primitives (Node interface,
+ * Connection/Edge synthesis, PageInfo, node()/nodes() query fields) and the
+ * `schema-bridge` for input/scalar conversion.
+ *
+ * Two passes (mirrors v1):
+ *   1) build named-type stubs (object/node/connection/scalar/input)
+ *   2) populate field maps via thunks that resolve IROutputTypes against
+ *      the registry
+ *
+ * The big delta from v1: field definitions live inline on the IR fragments
+ * (no thunk indirection), so we don't need the wrapFieldsThunk machinery.
+ */
+import {
+  Context as ContextNs,
+  Effect,
+  Stream,
+  type Context,
+  type ManagedRuntime,
+} from "effect";
+import {
+  GraphQLBoolean,
+  GraphQLEnumType,
+  GraphQLFloat,
+  GraphQLID,
+  GraphQLInputObjectType,
+  GraphQLInt,
+  GraphQLList,
+  GraphQLNonNull,
+  GraphQLObjectType,
+  GraphQLSchema,
+  GraphQLString,
+  Kind,
+  specifiedDirectives,
+  type ConstDirectiveNode,
+  type FieldDefinitionNode,
+  type GraphQLArgumentConfig,
+  type GraphQLDirective,
+  type GraphQLFieldConfig,
+  type GraphQLFieldConfigArgumentMap,
+  type GraphQLFieldConfigMap,
+  type GraphQLInterfaceType,
+  type GraphQLNamedType,
+  type GraphQLOutputType,
+  type NameNode,
+} from "graphql";
+import { relayDirectives } from "../relay-directives.ts";
+import {
+  buildConnectionTypes,
+  buildNodeInterface,
+  buildNodeQueryField,
+  buildNodesQueryField,
+  buildPageInfoType,
+  connectionArgs,
+} from "../relay.ts";
+import { schemaToInputType, schemaToScalar } from "../schema-bridge.ts";
+import { standardScalarTypes } from "../standard-scalars.ts";
+import type {
+  IR,
+  IRArgDef,
+  IRFieldDef,
+  IRNodeFragment,
+  IROutputType,
+  IRSubscriptionFieldDef,
+} from "./ir.ts";
+import { buildArgsDecoder, wrapResolver, type WrappedResolver } from "./runtime.ts";
+
+const ContextEmpty: Context.Context<never> = ContextNs.empty();
+
+function isContext(value: unknown): value is Context.Context<unknown> {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    typeof (value as { mapUnsafe?: unknown }).mapUnsafe === "object"
+  );
+}
+
+const BUILTIN_SCALARS: Record<string, GraphQLOutputType> = {
+  String: GraphQLString,
+  Int: GraphQLInt,
+  Float: GraphQLFloat,
+  Boolean: GraphQLBoolean,
+  ID: GraphQLID,
+};
+
+export interface LowerOptions {
+  readonly extraDirectives?: ReadonlyArray<GraphQLDirective>;
+}
+
+export function lower<R, ReqR = unknown>(
+  ir: IR,
+  runtime: ManagedRuntime.ManagedRuntime<R, never> | null,
+  options: LowerOptions = {},
+): GraphQLSchema {
+  const hasNodes = ir.nodes.size > 0;
+  const hasViewer = Array.from(ir.nodes.values()).some(
+    (n) => n.viewer !== undefined,
+  );
+  const hasQueryFields = Object.keys(ir.queryFields).length > 0;
+  if (!hasNodes && !hasQueryFields && !hasViewer) {
+    throw new Error(
+      "effect-graphql: at least one query field is required (call GraphQL.Query.layer({ ... }) or register a Node with a viewer option)",
+    );
+  }
+
+  const registry = new Map<string, GraphQLNamedType>();
+
+  // Standard custom scalars baked in
+  for (const scalar of standardScalarTypes) {
+    registry.set(scalar.name, scalar);
+  }
+
+  // User-declared scalars
+  for (const [, frag] of ir.scalars) {
+    const scalar = schemaToScalar(frag.name, frag.schema, frag.description);
+    registry.set(frag.name, scalar);
+  }
+
+  const nodeInterface: GraphQLInterfaceType | null = hasNodes
+    ? buildNodeInterface((obj) => {
+        if (typeof obj === "object" && obj !== null) {
+          const tn = (obj as { __typename?: unknown }).__typename;
+          if (typeof tn === "string") return tn;
+        }
+        return undefined;
+      })
+    : null;
+  const pageInfoType: GraphQLObjectType | null =
+    ir.connections.size > 0 ? buildPageInfoType() : null;
+  if (pageInfoType) registry.set("PageInfo", pageInfoType);
+  if (nodeInterface) registry.set("Node", nodeInterface);
+
+  // Pass 1 — type stubs for nodes/objects (lazy fields).
+  for (const [name, frag] of ir.nodes) {
+    const obj = new GraphQLObjectType({
+      name,
+      description: frag.description,
+      interfaces: () => (nodeInterface ? [nodeInterface] : []),
+      fields: () => buildObjectFields(frag.name, frag.fields, registry, runtime),
+    });
+    registry.set(name, obj);
+  }
+  for (const [name, frag] of ir.objects) {
+    const obj = new GraphQLObjectType({
+      name,
+      description: frag.description,
+      fields: () => buildObjectFields(frag.name, frag.fields, registry, runtime),
+    });
+    registry.set(name, obj);
+  }
+
+  // Pass 1.5 — connections.
+  for (const [, conn] of ir.connections) {
+    const nodeType = registry.get(conn.nodeTypeName);
+    if (!nodeType) {
+      throw new Error(
+        `effect-graphql: connection "${conn.name}" references unknown node type "${conn.nodeTypeName}"`,
+      );
+    }
+    if (!(nodeType instanceof GraphQLObjectType)) {
+      throw new Error(
+        `effect-graphql: connection "${conn.name}" expected node type "${conn.nodeTypeName}" to be a GraphQLObjectType`,
+      );
+    }
+    if (!pageInfoType) {
+      throw new Error(
+        "effect-graphql: internal — PageInfo not initialized despite connection types being present",
+      );
+    }
+    const { connection, edge } = buildConnectionTypes(
+      conn.nodeTypeName,
+      nodeType,
+      pageInfoType,
+    );
+    registry.set(connection.name, connection);
+    registry.set(edge.name, edge);
+  }
+
+  // Pass 2 — input types via schema-bridge (populates registry).
+  for (const [, input] of ir.inputs) {
+    const inputType = schemaToInputType(input.schema, registry);
+    if (!(inputType instanceof GraphQLInputObjectType)) {
+      throw new Error(
+        `effect-graphql: input "${input.name}" did not resolve to a GraphQLInputObjectType`,
+      );
+    }
+  }
+
+  // Build Query type.
+  const queryFieldMap: GraphQLFieldConfigMap<unknown, Context.Context<ReqR>> = {};
+
+  if (hasNodes && nodeInterface) {
+    const irNodeMap = nodeFragmentMapToV1Shape(ir.nodes);
+    const cfg = buildNodeQueryField(irNodeMap, nodeInterface);
+    queryFieldMap["node"] = {
+      type: cfg.type,
+      description: cfg.description,
+      args: cfg.args,
+      resolve: makeNodeQueryResolver<R, ReqR>(cfg.effectResolve, runtime),
+    };
+
+    const nodesCfg = buildNodesQueryField(irNodeMap, nodeInterface);
+    queryFieldMap["nodes"] = {
+      type: nodesCfg.type,
+      description: nodesCfg.description,
+      args: nodesCfg.args,
+      resolve: makeNodesQueryResolver<R, ReqR>(nodesCfg.effectResolve, runtime),
+    };
+  }
+
+  for (const [name, def] of Object.entries(ir.queryFields)) {
+    queryFieldMap[name] = buildFieldConfig<R, ReqR>(def, registry, runtime);
+  }
+
+  // Viewer fields: for each node type that declared a viewer, register
+  // `viewer: T` on the Query. Per design §4.1: there's only ever one
+  // canonical viewer, but multiple nodes registering one is a user error
+  // we surface lazily (last-write-wins matches v1).
+  for (const [name, frag] of ir.nodes) {
+    if (frag.viewer === undefined) continue;
+    const viewerCfg: IRFieldDef = {
+      type: { kind: "named", name },
+      nonNull: false,
+      args: {},
+      resolve: (_parent, _args, ctx, _info) => frag.viewer!(ctx),
+    };
+    queryFieldMap["viewer"] = buildFieldConfig<R, ReqR>(viewerCfg, registry, runtime);
+  }
+
+  const query = new GraphQLObjectType<unknown, Context.Context<ReqR>>({
+    name: "Query",
+    fields: () => queryFieldMap,
+  });
+
+  let mutation: GraphQLObjectType | undefined;
+  if (Object.keys(ir.mutationFields).length > 0) {
+    const mutationFieldMap: GraphQLFieldConfigMap<
+      unknown,
+      Context.Context<ReqR>
+    > = {};
+    for (const [name, def] of Object.entries(ir.mutationFields)) {
+      mutationFieldMap[name] = buildFieldConfig<R, ReqR>(def, registry, runtime);
+    }
+    mutation = new GraphQLObjectType<unknown, Context.Context<ReqR>>({
+      name: "Mutation",
+      fields: () => mutationFieldMap,
+    });
+  }
+
+  let subscription: GraphQLObjectType | undefined;
+  if (Object.keys(ir.subscriptionFields).length > 0) {
+    const subFieldMap: GraphQLFieldConfigMap<
+      unknown,
+      Context.Context<ReqR>
+    > = {};
+    for (const [name, def] of Object.entries(ir.subscriptionFields)) {
+      subFieldMap[name] = buildSubscriptionFieldConfig<R, ReqR>(
+        def,
+        registry,
+        runtime,
+      );
+    }
+    subscription = new GraphQLObjectType<unknown, Context.Context<ReqR>>({
+      name: "Subscription",
+      fields: () => subFieldMap,
+    });
+  }
+
+  return new GraphQLSchema({
+    query,
+    mutation,
+    subscription,
+    types: Array.from(registry.values()),
+    directives: [
+      ...specifiedDirectives,
+      ...relayDirectives(),
+      ...(options.extraDirectives ?? []),
+    ],
+  });
+}
+
+// V1's relay.ts buildNodeQueryField expects an `IRNodeType` map. Adapt v2
+// node fragments to that shape (only `loadOne` is read; other fields can be
+// stubbed since relay never inspects them).
+function nodeFragmentMapToV1Shape(
+  nodes: Map<string, IRNodeFragment>,
+): Map<string, import("../ir.ts").IRNodeType> {
+  const out = new Map<string, import("../ir.ts").IRNodeType>();
+  for (const [name, frag] of nodes) {
+    out.set(name, {
+      kind: "node",
+      name,
+      description: frag.description,
+      interfaces: ["Node"],
+      // v1 uses a thunk for fields; we never evaluate it through buildNode*QueryField
+      // so an empty thunk is safe here.
+      fields: () => ({}),
+      loadOne: (id, ctx) => frag.load(id, ctx),
+    });
+  }
+  return out;
+}
+
+function buildObjectFields<R, ReqR>(
+  ownerName: string,
+  fields: Record<string, IRFieldDef>,
+  registry: Map<string, GraphQLNamedType>,
+  runtime: ManagedRuntime.ManagedRuntime<R, never> | null,
+): GraphQLFieldConfigMap<unknown, Context.Context<ReqR>> {
+  const out: GraphQLFieldConfigMap<unknown, Context.Context<ReqR>> = {};
+  for (const [fieldName, def] of Object.entries(fields)) {
+    out[fieldName] = buildFieldConfig<R, ReqR>(def, registry, runtime, ownerName, fieldName);
+  }
+  return out;
+}
+
+function buildFieldConfig<R, ReqR>(
+  rawDef: IRFieldDef,
+  registry: Map<string, GraphQLNamedType>,
+  runtime: ManagedRuntime.ManagedRuntime<R, never> | null,
+  ownerName: string = "<root>",
+  fieldName: string = "<field>",
+): GraphQLFieldConfig<unknown, Context.Context<ReqR>> {
+  const def: IRFieldDef = { ...rawDef, args: rawDef.args ?? {} };
+  const baseType = resolveOutputType(def.type, registry, ownerName, fieldName);
+  const finalType = def.nonNull ? new GraphQLNonNull(baseType) : baseType;
+
+  const args: GraphQLFieldConfigArgumentMap = {};
+  for (const [argName, argDef] of Object.entries(def.args)) {
+    const inputType = schemaToInputType(argDef.schema, registry);
+    const cfg: GraphQLArgumentConfig = { type: inputType };
+    if (argDef.description !== undefined) cfg.description = argDef.description;
+    args[argName] = cfg;
+  }
+
+  if (isConnectionOutput(def.type, registry)) {
+    const ca = connectionArgs();
+    for (const [k, v] of Object.entries(ca)) {
+      if (!(k in args)) args[k] = v;
+    }
+  }
+
+  const resolve: WrappedResolver<ReqR> = wrapResolver<R, ReqR>(def, { runtime });
+
+  const cfg: GraphQLFieldConfig<unknown, Context.Context<ReqR>> = {
+    type: finalType,
+    args,
+    resolve: resolve as GraphQLFieldConfig<
+      unknown,
+      Context.Context<ReqR>
+    >["resolve"],
+  };
+  if (def.description !== undefined) cfg.description = def.description;
+
+  const semNonNullAst = buildSemanticNonNullAst(def, fieldName);
+  if (semNonNullAst !== null) cfg.astNode = semNonNullAst;
+
+  return cfg;
+}
+
+function buildSemanticNonNullAst(
+  def: IRFieldDef,
+  fieldName: string,
+): FieldDefinitionNode | null {
+  if (def.semanticNonNull === false) return null;
+  const levels = wireNullableLevels(def.type, def.nonNull);
+  if (levels.length === 0) return null;
+  const directive = makeSemanticNonNullDirective(levels);
+  return makeFieldDefinitionNode(fieldName, directive);
+}
+
+function wireNullableLevels(
+  type: IROutputType,
+  outerNonNull: boolean,
+): ReadonlyArray<number> {
+  const out: number[] = [];
+  if (!outerNonNull) out.push(0);
+  let level = 1;
+  let cursor: IROutputType | undefined = type;
+  while (cursor && cursor.kind === "list") {
+    const itemNonNull = cursor.itemNonNull === true;
+    if (!itemNonNull) out.push(level);
+    cursor = cursor.inner;
+    level += 1;
+  }
+  return out;
+}
+
+function makeSemanticNonNullDirective(
+  levels: ReadonlyArray<number>,
+): ConstDirectiveNode {
+  const name: NameNode = { kind: Kind.NAME, value: "semanticNonNull" };
+  const isDefault = levels.length === 1 && levels[0] === 0;
+  if (isDefault) {
+    return { kind: Kind.DIRECTIVE, name, arguments: [] };
+  }
+  return {
+    kind: Kind.DIRECTIVE,
+    name,
+    arguments: [
+      {
+        kind: Kind.ARGUMENT,
+        name: { kind: Kind.NAME, value: "levels" },
+        value: {
+          kind: Kind.LIST,
+          values: levels.map((n) => ({
+            kind: Kind.INT as const,
+            value: String(n),
+          })),
+        },
+      },
+    ],
+  };
+}
+
+function makeFieldDefinitionNode(
+  fieldName: string,
+  directive: ConstDirectiveNode,
+): FieldDefinitionNode {
+  return {
+    kind: Kind.FIELD_DEFINITION,
+    name: { kind: Kind.NAME, value: fieldName },
+    type: {
+      kind: Kind.NAMED_TYPE,
+      name: { kind: Kind.NAME, value: "Placeholder" },
+    },
+    directives: [directive],
+  };
+}
+
+function resolveOutputType(
+  ref: IROutputType,
+  registry: Map<string, GraphQLNamedType>,
+  ownerName: string,
+  fieldName: string,
+): GraphQLOutputType {
+  switch (ref.kind) {
+    case "scalar": {
+      const builtin = BUILTIN_SCALARS[ref.name];
+      if (builtin) return builtin;
+      const named = registry.get(ref.name);
+      if (!named) {
+        throw new Error(
+          `effect-graphql: scalar "${ref.name}" referenced by field "${ownerName}.${fieldName}" is not registered.`,
+        );
+      }
+      return named as GraphQLOutputType;
+    }
+    case "named": {
+      const named = registry.get(ref.name);
+      if (!named) {
+        throw new Error(
+          `effect-graphql: type "${ref.name}" referenced by field "${ownerName}.${fieldName}" is not registered.`,
+        );
+      }
+      return named as GraphQLOutputType;
+    }
+    case "list": {
+      const inner = resolveOutputType(ref.inner, registry, ownerName, fieldName);
+      const itemType = ref.itemNonNull ? new GraphQLNonNull(inner) : inner;
+      return new GraphQLList(itemType);
+    }
+  }
+}
+
+function isConnectionOutput(
+  ref: IROutputType,
+  registry: Map<string, GraphQLNamedType>,
+): boolean {
+  if (ref.kind !== "named") return false;
+  const t = registry.get(ref.name);
+  if (!(t instanceof GraphQLObjectType)) return false;
+  return ref.name.endsWith("Connection");
+}
+
+function makeNodeQueryResolver<R, ReqR>(
+  effectResolve: ReturnType<typeof buildNodeQueryField>["effectResolve"],
+  runtime: ManagedRuntime.ManagedRuntime<R, never> | null,
+): WrappedResolver<ReqR> {
+  const synthetic: IRFieldDef = {
+    type: { kind: "named", name: "Node" },
+    nonNull: false,
+    args: {},
+    resolve: (_parent, args, ctx, _info) =>
+      effectResolve(args as { id: string }, ctx),
+  };
+  return wrapResolver<R, ReqR>(synthetic, { runtime });
+}
+
+function makeNodesQueryResolver<R, ReqR>(
+  effectResolve: ReturnType<typeof buildNodesQueryField>["effectResolve"],
+  runtime: ManagedRuntime.ManagedRuntime<R, never> | null,
+): WrappedResolver<ReqR> {
+  const synthetic: IRFieldDef = {
+    type: {
+      kind: "list",
+      itemNonNull: false,
+      inner: { kind: "named", name: "Node" },
+    },
+    nonNull: false,
+    args: {},
+    resolve: (_parent, args, ctx, _info) =>
+      effectResolve(args as { ids: ReadonlyArray<string> }, ctx),
+  };
+  return wrapResolver<R, ReqR>(synthetic, { runtime });
+}
+
+function buildSubscriptionFieldConfig<R, ReqR>(
+  rawDef: IRSubscriptionFieldDef,
+  registry: Map<string, GraphQLNamedType>,
+  runtime: ManagedRuntime.ManagedRuntime<R, never> | null,
+  ownerName: string = "Subscription",
+  fieldName: string = "<field>",
+): GraphQLFieldConfig<unknown, Context.Context<ReqR>> {
+  const argDefs: Record<string, IRArgDef> = rawDef.args ?? {};
+  const baseType = resolveOutputType(rawDef.type, registry, ownerName, fieldName);
+  const finalType = rawDef.nonNull ? new GraphQLNonNull(baseType) : baseType;
+
+  const args: GraphQLFieldConfigArgumentMap = {};
+  for (const [argName, argDef] of Object.entries(argDefs)) {
+    const inputType = schemaToInputType(argDef.schema, registry);
+    const a: GraphQLArgumentConfig = { type: inputType };
+    if (argDef.description !== undefined) a.description = argDef.description;
+    args[argName] = a;
+  }
+
+  const decodeArgs = buildArgsDecoder(argDefs);
+  const userSubscribe = rawDef.subscribe;
+
+  const subscribeFn = (
+    parent: unknown,
+    rawArgs: Record<string, unknown>,
+    ctx: Context.Context<ReqR>,
+    info: Parameters<
+      NonNullable<GraphQLFieldConfig<unknown, unknown>["subscribe"]>
+    >[3],
+  ): Promise<AsyncIterable<unknown>> => {
+    let decoded: Record<string, unknown>;
+    try {
+      decoded = decodeArgs(rawArgs);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+
+    let stream: Stream.Stream<unknown, unknown, unknown>;
+    try {
+      stream = userSubscribe(parent, decoded, ctx as Context.Context<unknown>, info);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+
+    const safeCtx = isContext(ctx)
+      ? (ctx as Context.Context<unknown>)
+      : (ContextEmpty as Context.Context<unknown>);
+    const provided = Stream.provideContext(
+      stream,
+      safeCtx,
+    ) as Stream.Stream<unknown, unknown, R>;
+
+    const buildReadable = Stream.toReadableStreamEffect(provided);
+    const promise =
+      runtime !== null
+        ? runtime.runPromise(buildReadable)
+        : Effect.runPromise(
+            buildReadable as unknown as Effect.Effect<
+              ReadableStream<unknown>,
+              never,
+              never
+            >,
+          );
+
+    return promise.then((rs) => readableStreamAsAsyncIterable(rs));
+  };
+
+  const resolve = (payload: unknown): unknown => payload;
+
+  const cfg: GraphQLFieldConfig<unknown, Context.Context<ReqR>> = {
+    type: finalType,
+    args,
+    resolve,
+    subscribe: subscribeFn as GraphQLFieldConfig<
+      unknown,
+      Context.Context<ReqR>
+    >["subscribe"],
+  };
+  if (rawDef.description !== undefined) cfg.description = rawDef.description;
+  return cfg;
+}
+
+function readableStreamAsAsyncIterable<A>(
+  rs: ReadableStream<A>,
+): AsyncIterable<A> {
+  const native = (
+    rs as unknown as { [Symbol.asyncIterator]?: () => AsyncIterator<A> }
+  )[Symbol.asyncIterator];
+  if (typeof native === "function") {
+    return rs as unknown as AsyncIterable<A>;
+  }
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<A> {
+      const reader = rs.getReader();
+      return {
+        async next(): Promise<IteratorResult<A>> {
+          const { value, done } = await reader.read();
+          if (done) return { value: undefined as unknown as A, done: true };
+          return { value, done: false };
+        },
+        async return(): Promise<IteratorResult<A>> {
+          await reader.cancel();
+          reader.releaseLock();
+          return { value: undefined as unknown as A, done: true };
+        },
+        async throw(err): Promise<IteratorResult<A>> {
+          await reader.cancel(err);
+          reader.releaseLock();
+          throw err;
+        },
+      };
+    },
+  };
+}
