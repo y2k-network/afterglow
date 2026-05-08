@@ -1,13 +1,13 @@
 # @athanor/alembic
 
-A Relay-purpose-built GraphQL server with an Effect-native execution layer.
+A GraphQL server built for Relay, with Effect as its type system.
 
 Install it, declare your nodes as Layers, run it. Your schema is already
 speaking Relay's full vocabulary: every client directive declared, every
 connection convention enforced, the `Node` interface with base64 global IDs
 in place, the canonical `Viewer` session root one call away. Configuration
 is reserved for the things that are genuinely yours — your services, your
-auth, your route. The shape of the schema is not configurable; it is correct.
+auth. The shape of the schema is not configurable; it is correct.
 
 > Status: pre-1.0. v1 is in active development. The public API may shift while
 > Effect v4 itself is in beta.
@@ -20,8 +20,8 @@ Three legs:
   `Effect<T, E, R>`. Typed errors propagate through the schema. Service
   requirements (`R`) accumulate across every Layer in the schema and are
   discharged in two tiers — a server-scoped `ManagedRuntime<R>` and a
-  per-request `Layer`. There is no parallel DI system, no Promise interop
-  layer, no untyped error envelope.
+  per-request `Layer`. There is no parallel DI system, no untyped error
+  envelope.
 - **Relay-purpose.** The structural pieces relay-compiler refuses to
   compile without — `Node`, global IDs, Cursor Connections — are produced
   by `GraphQL.Node.layer(...)` and `GraphQL.Connection(...)`. Every Relay
@@ -34,14 +34,7 @@ Three legs:
   don't decide whether to declare `@catch` on this schema or that one.
   You don't wire `node(id:)` and `nodes(ids:)` yourself. The shape is
   the canonical Relay shape. The directives are the full Relay set. The
-  conventions are the conventions Relay's documentation describes — and
-  the ones it *doesn't*, but the runtime depends on.
-
-Existing TypeScript schema builders (Pothos, Nexus, TypeGraphQL) are
-mature and good at what they do. They are general-purpose.
-@athanor/alembic sits at a narrower point in the design space: a server
-for teams that have decided they are using Relay, written against
-Effect.
+  conventions are the conventions Relay's documentation describes.
 
 ## What's baked in
 
@@ -833,9 +826,9 @@ spend your complexity budget.
 
 **vs Pothos.** General-purpose, plugin-rich, builder-style. To get
 Relay-idiomatic behavior you write or pick a Relay plugin and wire
-it. Effect support is a bolt-on. Pothos is the right call if your
-stack is Promise-based and your needs map cleanly to existing
-plugins.
+it. Effect support is a community plugin, not a first-party
+primitive. Pothos is the right call if your stack is Promise-based
+and your needs map cleanly to existing plugins.
 
 **vs Nexus / GraphQL Yoga.** Code-first or HTTP-focused but agnostic
 to the schema's shape. Relay conventions are configuration on top.
