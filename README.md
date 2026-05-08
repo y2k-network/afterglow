@@ -104,10 +104,15 @@ These are not opt-in. Every schema produced by @athanor/alembic gets them.
   exposes the schema over the modern subprotocol. Legacy
   `subscriptions-transport-ws` is intentionally unsupported, matching
   Relay.
-- **Opt-in BFS executor.** A level-order scheduler that runs every
-  field at a given depth concurrently, turning each level into a
-  natural batching window. Off by default; pass `executor: "bfs"` to
-  `toHttpApp` to enable.
+- **DataLoader-style N+1 collapse, no manual setup.** Effect's
+  `RequestResolver` aggregates concurrent `Request` instances submitted
+  in the same fiber forest into a single batched callback. Because
+  every resolver is an Effect, this works through the default executor
+  with no per-app DataLoader wiring — `Request` / `RequestResolver`
+  inside a resolver body, and N+1s collapse on their own. Verified in
+  `bench/` against the project's default executor (M1 Max, Bun
+  1.3.10): both default and BFS collapse the N+1 demo to a single
+  batched call.
 
 ## Pit of success — what we catch for you
 
@@ -845,13 +850,27 @@ mount, and the resolver-context plumbing yourself. @athanor/alembic
 is reachable through the lowered schema — but the ergonomics gap is
 the gap.
 
+## Executors
+
+`GraphQL.toHttpApp` defaults to graphql-js's executor. An opt-in
+`executor: "bfs"` mode runs every field at a given depth concurrently
+— useful only when a workload has wider async aggregation needs than
+Effect's `Request` / `RequestResolver` cycle covers (resolver bodies
+that do their own batching across separate microtask ticks). For
+typical Relay workloads the default executor is faster and already
+gets DataLoader-style N+1 collapse via Effect; benchmarks in `bench/`
+show BFS adds ~2× overhead in absolute throughput on a single
+resolver and a 100-sibling fan-out.
+
+```ts
+GraphQL.toHttpApp(SchemaLayer, { runtime, executor: "bfs" })
+```
+
+Subscriptions and `@defer` / `@stream` are not supported under BFS
+(use `toWebSocketApp` and the upcoming incremental-delivery transport
+respectively).
+
 ## Roadmap
-
-**Now (v1):**
-
-- T27 — build-time schema linter for Relay footguns (in flight).
-- T38 — performance benchmarks: resolver throughput, BFS speedup,
-  memory (in flight).
 
 **Coming:**
 
@@ -864,13 +883,10 @@ the gap.
 
 - Grafast-style plan executor — plan-based execution built on
   Effect's `Request` / `RequestResolver`. Adds a `plan:` field config
-  alongside `resolve:`. Eliminates N+1 by construction at the cost of
-  a planning pass and a different field-config style.
-
-Until then, the manual N+1 escape hatch is `Request` /
-`RequestResolver` inside resolver bodies; Effect's runtime
-auto-coalesces concurrent `Request` instances through their
-resolver.
+  alongside `resolve:`. Eliminates N+1 by construction at the cost
+  of a planning pass and a different field-config style. Until then,
+  the existing escape hatch is `Request` / `RequestResolver` inside
+  resolver bodies — same Effect machinery, no plan step.
 
 ## Effect v4 beta
 
