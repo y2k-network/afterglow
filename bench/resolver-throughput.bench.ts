@@ -113,14 +113,20 @@ class D2 extends Schema.Class<D2>("D2")({ id: Schema.String, child: D3 }) {}
 class D1 extends Schema.Class<D1>("D1")({ id: Schema.String, child: D2 }) {}
 class D0 extends Schema.Class<D0>("D0")({ id: Schema.String, child: D1 }) {}
 
-const NESTED_LEVELS = [D9, D8, D7, D6, D5, D4, D3, D2, D1, D0] as const;
-
 const buildNestedSchema = () => {
-  const layers = NESTED_LEVELS.map((Cls) =>
-    GraphQL.Node.layer(Cls)({
-      load: () => Effect.succeed(null),
-    }),
-  );
+  // Each level is an independent Schema.Class — registering each via its own
+  // GraphQL.Node.layer is the only way to make the type known to the lowerer.
+  // We declare them one by one to keep TS inference monomorphic per layer.
+  const L9 = GraphQL.Node.layer(D9)({ load: () => Effect.succeed(null) });
+  const L8 = GraphQL.Node.layer(D8)({ load: () => Effect.succeed(null) });
+  const L7 = GraphQL.Node.layer(D7)({ load: () => Effect.succeed(null) });
+  const L6 = GraphQL.Node.layer(D6)({ load: () => Effect.succeed(null) });
+  const L5 = GraphQL.Node.layer(D5)({ load: () => Effect.succeed(null) });
+  const L4 = GraphQL.Node.layer(D4)({ load: () => Effect.succeed(null) });
+  const L3 = GraphQL.Node.layer(D3)({ load: () => Effect.succeed(null) });
+  const L2 = GraphQL.Node.layer(D2)({ load: () => Effect.succeed(null) });
+  const L1 = GraphQL.Node.layer(D1)({ load: () => Effect.succeed(null) });
+  const L0 = GraphQL.Node.layer(D0)({ load: () => Effect.succeed(null) });
 
   const QueryLayer = GraphQL.Query.layer({
     root: GraphQL.queryField(D0, {
@@ -130,25 +136,27 @@ const buildNestedSchema = () => {
         // allocation backs the entire 10-level walk.
         let cur: Record<string, unknown> = { id: "leaf", value: "leaf" };
         for (let d = 0; d < 9; d++) cur = { id: `n${d}`, child: cur };
-        return Effect.succeed(cur);
+        // The class constructor would re-validate; we hand-shape the literal
+        // to skip that. Cast through the structural shape D0 expects.
+        return Effect.succeed(cur as unknown as D0);
       },
     }),
   });
 
-  return buildSchema(Layer.mergeAll(QueryLayer, ...layers), null);
+  return buildSchema(Layer.mergeAll(QueryLayer, L0, L1, L2, L3, L4, L5, L6, L7, L8, L9), null);
 };
 
 // ---------------------------------------------------------------------------
 // Run helpers
 // ---------------------------------------------------------------------------
 
-const runDefault = (schema: GraphQLSchema, doc: DocumentNode) => () =>
-  execute({ schema, document: doc, contextValue: EMPTY_CTX }).then((r) => {
-    if ((r as { errors?: ReadonlyArray<unknown> }).errors) {
-      throw new Error(JSON.stringify(r));
-    }
-    return r;
-  });
+const runDefault = (schema: GraphQLSchema, doc: DocumentNode) => async () => {
+  const r = await execute({ schema, document: doc, contextValue: EMPTY_CTX });
+  if ((r as { errors?: ReadonlyArray<unknown> }).errors) {
+    throw new Error(JSON.stringify(r));
+  }
+  return r;
+};
 
 const runBfs = (schema: GraphQLSchema, doc: DocumentNode) => () =>
   executeBfs({ schema, document: doc, contextValue: EMPTY_CTX }).then((r) => {
@@ -202,6 +210,7 @@ if (import.meta.main) {
     name: r.name,
     opsPerSec: r.opsPerSec,
     msPerOp: r.msPerOp,
+    stats: r.stats,
   }));
   agg.timestamp = new Date().toISOString();
   saveResults(agg);
