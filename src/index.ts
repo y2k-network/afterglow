@@ -106,6 +106,10 @@ export { matchable } from "./relay-3d.ts";
 export { lower, type LowerOptions } from "./lower.ts";
 export { executeBfs, type BfsExecuteArgs } from "./executor-bfs.ts";
 
+// SDL printer that preserves field-level directive applications (e.g.
+// @semanticNonNull) attached on `GraphQLField.astNode.directives`.
+export { printSchemaWithDirectives, type PrintSchemaOptions } from "./print-sdl.ts";
+
 // Build-time schema linter (Relay anti-pattern detection).
 export { lintSchema, type LintIssue } from "./lint.ts";
 

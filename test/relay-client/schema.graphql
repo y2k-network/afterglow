@@ -1,0 +1,111 @@
+"""
+Marks a wire-nullable position as semantically non-null on success. Relay clients with @throwOnFieldError generate non-null TS types for these positions.
+"""
+directive @semanticNonNull(levels: [Int] = [0]) on FIELD_DEFINITION
+
+"""
+Marks an OBJECT type as having a refetchable root entry point keyed by `field_name`.
+"""
+directive @fetchable(field_name: String) on OBJECT
+
+"""
+Defers delivery of the annotated fragment selection to a later payload.
+"""
+directive @defer(label: String!, if: Boolean = true) on FRAGMENT_SPREAD | INLINE_FRAGMENT
+
+"""
+Streams the items of a list field across multiple incremental payloads.
+"""
+directive @stream(label: String!, initialCount: Int!, if: Boolean = true, useCustomizedBatch: Boolean = false) on FIELD
+
+"""
+ISO-8601 encoded UTC date-time string (e.g. `2026-05-08T07:00:00.000Z`).
+"""
+scalar DateTime
+
+scalar Date
+
+"""
+Arbitrary JSON value (object, array, string, number, boolean, or null).
+"""
+scalar JSON
+
+"""RFC 3986 URL string."""
+scalar URL
+
+"""RFC 4122 UUID string."""
+scalar UUID
+
+"""
+Arbitrary-precision integer encoded as a decimal string (for JSON safety).
+"""
+scalar BigInt
+
+"""RFC 5322 email address."""
+scalar EmailAddress
+
+"""Relay PageInfo — pagination metadata for a Connection."""
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+"""An object with a globally unique ID (Relay Node interface)."""
+interface Node {
+  """The globally unique ID of this object."""
+  id: ID!
+}
+
+type User implements Node {
+  id: ID!
+}
+
+type Todo implements Node {
+  title: String @semanticNonNull
+  completed: Boolean @semanticNonNull
+  createdAt: Date @semanticNonNull
+  id: ID!
+}
+
+type Viewer {
+  user: User @semanticNonNull
+  todos(first: Int, last: Int, after: String, before: String): TodoConnection @semanticNonNull
+}
+
+type TodoConnection {
+  edges: [TodoEdge]!
+  pageInfo: PageInfo!
+}
+
+type TodoEdge {
+  node: Todo
+  cursor: String!
+}
+
+input CreateTodoInput {
+  title: String
+}
+
+type Query {
+  """Fetches an object given its globally unique ID."""
+  node(
+    """The globally unique ID of the object."""
+    id: ID!
+  ): Node
+  """
+  Fetches multiple objects given a list of globally unique IDs. Order is preserved; unknown IDs become null at the same index.
+  """
+  nodes(
+    """The list of globally unique IDs to fetch."""
+    ids: [ID!]!
+  ): [Node]
+  todos(first: Int, last: Int, after: String, before: String): TodoConnection @semanticNonNull
+  viewer: Viewer @semanticNonNull
+}
+
+type Mutation {
+  createTodo(input: CreateTodoInput): Todo!
+  deleteTodo(id: String): ID!
+}

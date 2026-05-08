@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/relay-compiler/relay-compiler-config-schema.json",
+  "src": "./src",
+  "language": "typescript",
+  "schema": "./schema.graphql",
+  "schemaExtensions": ["./extensions"],
+  "excludes": ["**/node_modules/**", "**/__generated__/**"],
+  "eagerEsModules": true,
+  "noFutureProofEnums": true,
+  "customScalarTypes": {
+    "DateTime": "string",
+    "Date": "string",
+    "JSON": "any",
+    "URL": "string",
+    "UUID": "string",
+    "BigInt": "string",
+    "EmailAddress": "string"
+  },
+  "featureFlags": {
+    "enable_fragment_argument_transform": true,
+    "no_inline": { "kind": "enabled" }
+  }
+}

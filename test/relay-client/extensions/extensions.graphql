@@ -1,0 +1,16 @@
+# Client-side schema extensions consumed by relay-compiler via the
+# `schemaExtensions` config key. This is the standard Relay way to add
+# fields the server doesn't expose on the wire (e.g. edge-returning
+# mutation payloads needed for `@appendEdge`).
+#
+# Source:
+#   https://relay.dev/docs/glossary/#schema-extension
+#   https://relay.dev/docs/getting-started/compiler-config/
+
+extend type Mutation {
+  createTodoEdge(input: CreateTodoInput!): CreateTodoEdgePayload
+}
+
+type CreateTodoEdgePayload {
+  todoEdge: TodoEdge
+}
