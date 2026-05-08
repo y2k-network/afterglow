@@ -295,10 +295,21 @@ test("property: Layer.mergeAll order independence (lowered SDL identical)", () =
           return { layers, queryLayer };
         };
 
+        // `Layer.mergeAll` expects a non-empty tuple of `Layer<never, any, any>`
+        // (Layer.d.ts:1111 — `<[Layer, ...Layer[]]>`), not a spread of an
+        // arbitrary-length array. We chain `Layer.merge` instead.
+        const mergeArr = (
+          xs: ReadonlyArray<Layer.Layer<never, never, never>>,
+        ): Layer.Layer<never, never, never> => {
+          let out = xs[0]!;
+          for (let i = 1; i < xs.length; i++) out = Layer.merge(out, xs[i]!);
+          return out;
+        };
+
         const a = make();
         const sdlA = printSchema(
           buildSchema(
-            Layer.mergeAll(...a.layers.map((l) => l.layer), a.queryLayer),
+            mergeArr([...a.layers.map((l) => l.layer), a.queryLayer]),
             null,
           ),
         );
@@ -306,7 +317,10 @@ test("property: Layer.mergeAll order independence (lowered SDL identical)", () =
         const b = make();
         const sdlB = printSchema(
           buildSchema(
-            Layer.mergeAll(...b.layers.slice().reverse().map((l) => l.layer), b.queryLayer),
+            mergeArr([
+              ...b.layers.slice().reverse().map((l) => l.layer),
+              b.queryLayer,
+            ]),
             null,
           ),
         );
