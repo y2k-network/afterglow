@@ -27,7 +27,10 @@ import {
   GraphQLObjectType,
   GraphQLSchema,
   GraphQLString,
+  Kind,
   specifiedDirectives,
+  type ConstDirectiveNode,
+  type FieldDefinitionNode,
   type GraphQLArgumentConfig,
   type GraphQLDirective,
   type GraphQLFieldConfig,
@@ -36,6 +39,7 @@ import {
   type GraphQLInterfaceType,
   type GraphQLNamedType,
   type GraphQLOutputType,
+  type NameNode,
 } from "graphql";
 import { relayDirectives } from "./relay-directives.ts";
 import type {
@@ -63,6 +67,7 @@ import {
   type WrappedResolver,
 } from "./runtime.ts";
 import { schemaToInputType, schemaToScalar } from "./schema-bridge.ts";
+import { standardScalarTypes } from "./standard-scalars.ts";
 import type { OutputTypeRef } from "./types.ts";
 
 const BUILTIN_SCALARS: Record<string, GraphQLOutputType> = {
@@ -106,6 +111,15 @@ export function lower<R, ReqR = unknown>(
   }
 
   const registry = new Map<string, GraphQLNamedType>();
+
+  // Seed the registry with the standard custom scalars (DateTime, Date,
+  // JSON, URL, UUID, BigInt, EmailAddress). These are baked into every
+  // schema so Relay clients can pre-configure `customScalarTypes` for the
+  // framework — they are registered even when no user field references
+  // them, which keeps introspection consistent across servers.
+  for (const scalar of standardScalarTypes) {
+    registry.set(scalar.name, scalar);
+  }
 
   // Pass 1 — type stubs for everything except connections (which depend on
   // node stubs) and inputs (deferred to schema-bridge in pass 2).
@@ -378,7 +392,128 @@ function buildFieldConfig<R, ReqR>(
     >["resolve"],
   };
   if (def.description !== undefined) cfg.description = def.description;
+
+  const semNonNullAst = buildSemanticNonNullAst(def, fieldName);
+  if (semNonNullAst !== null) cfg.astNode = semNonNullAst;
+
   return cfg;
+}
+
+/**
+ * Decide whether a field should carry `@semanticNonNull` and at which
+ * `levels`. When emission is appropriate, return a synthetic
+ * `FieldDefinitionNode` whose `directives` array carries the application;
+ * otherwise return null.
+ *
+ * Auto-emit policy (zero-config positioning, see DESIGN.md §6):
+ *   - The user explicitly opting out via `semanticNonNull: false` always
+ *     suppresses emission, regardless of nullability.
+ *   - Wire-non-null positions never emit — the wire-non-null is already a
+ *     stronger guarantee than `@semanticNonNull`.
+ *   - For every other position the framework lowered to wire-nullable, emit
+ *     `@semanticNonNull` covering that level. Effect Schema resolver returns
+ *     are non-null by convention here (no `Schema.NullOr` wrapper), so the
+ *     lowering's nullability is purely a "default-nullable for resilience"
+ *     concern; semantic non-nullability is the right complement.
+ *
+ * `levels` indexes into a list field's depth, with `0` being the outermost
+ * type. Examples:
+ *   - `String`             → wire `String` → emit `[0]`.
+ *   - `String!`            → wire `String!` → no emission.
+ *   - `[String]`           → wire `[String]` → emit `[0, 1]`.
+ *   - `[String!]`          → wire `[String]` → emit `[0]` (item is wire-non-null already).
+ *   - `[String]!`          → wire `[String]!` → emit `[1]` (outer wire-non-null; items still wire-nullable).
+ *   - `[String!]!`         → wire `[String!]!` → no emission.
+ *
+ * Note: `levels` here describes the wire-nullable positions on this field.
+ * graphql-spec PR #1065 is explicit: each integer in `levels` names a list
+ * dimension (with `0` being the outermost type). When every wire-nullable
+ * dimension is annotated, a Relay client using `@throwOnFieldError` derives
+ * fully non-null TS types for the field — which is the headline payoff.
+ */
+function buildSemanticNonNullAst(
+  def: IRFieldDef,
+  fieldName: string,
+): FieldDefinitionNode | null {
+  if (def.semanticNonNull === false) return null;
+
+  const levels = wireNullableLevels(def.type, def.nonNull);
+  if (levels.length === 0) return null;
+
+  const directive = makeSemanticNonNullDirective(levels);
+  return makeFieldDefinitionNode(fieldName, directive);
+}
+
+/**
+ * Walk the field's wire shape and collect the list of levels at which the
+ * wire is nullable. Level 0 is the outermost (the field itself); level `n`
+ * is the n-th list nesting. The default `nonNull = false` and
+ * `itemNonNull = false` mean every list level is wire-nullable.
+ */
+function wireNullableLevels(
+  type: OutputTypeRef<unknown>,
+  outerNonNull: boolean,
+): ReadonlyArray<number> {
+  const out: number[] = [];
+  if (!outerNonNull) out.push(0);
+  let level = 1;
+  let cursor: OutputTypeRef<unknown> | undefined = type;
+  while (cursor && cursor.kind === "list") {
+    const itemNonNull = cursor.itemNonNull === true;
+    if (!itemNonNull) out.push(level);
+    cursor = cursor.inner;
+    level += 1;
+  }
+  return out;
+}
+
+function makeSemanticNonNullDirective(
+  levels: ReadonlyArray<number>,
+): ConstDirectiveNode {
+  const name: NameNode = { kind: Kind.NAME, value: "semanticNonNull" };
+  // Omit the `levels` argument when it would equal the directive's default
+  // ([0]) so the printed form is the canonical bare `@semanticNonNull` for
+  // the common scalar case. Any non-default levels list is emitted.
+  const isDefault = levels.length === 1 && levels[0] === 0;
+  if (isDefault) {
+    return { kind: Kind.DIRECTIVE, name, arguments: [] };
+  }
+  return {
+    kind: Kind.DIRECTIVE,
+    name,
+    arguments: [
+      {
+        kind: Kind.ARGUMENT,
+        name: { kind: Kind.NAME, value: "levels" },
+        value: {
+          kind: Kind.LIST,
+          values: levels.map((n) => ({
+            kind: Kind.INT as const,
+            value: String(n),
+          })),
+        },
+      },
+    ],
+  };
+}
+
+function makeFieldDefinitionNode(
+  fieldName: string,
+  directive: ConstDirectiveNode,
+): FieldDefinitionNode {
+  // graphql-js requires `name` and `type` on a FieldDefinitionNode but we
+  // never round-trip this AST through SDL parsing; the directives array is
+  // the only piece consumers (printSchemaWithDirectives) care about. The
+  // `type` slot is filled with a placeholder NamedType for spec conformance.
+  return {
+    kind: Kind.FIELD_DEFINITION,
+    name: { kind: Kind.NAME, value: fieldName },
+    type: {
+      kind: Kind.NAMED_TYPE,
+      name: { kind: Kind.NAME, value: "Placeholder" },
+    },
+    directives: [directive],
+  };
 }
 
 function resolveOutputType(

@@ -11,6 +11,13 @@ export interface IRFieldDef {
   readonly type: OutputTypeRef<unknown>;
   /** false = nullable on the wire (default); true = wrapped in GraphQLNonNull. */
   readonly nonNull: boolean;
+  /**
+   * Optional explicit override for `@semanticNonNull` emission. `undefined`
+   * (the default) means "auto-detect" — lower.ts emits on every wire-nullable
+   * position. `false` suppresses emission; `true` is equivalent to undefined
+   * (auto). Wire-non-null positions never emit regardless.
+   */
+  readonly semanticNonNull?: boolean;
   readonly description?: string;
   readonly args: Record<string, IRArgDef>;
   readonly resolve: (

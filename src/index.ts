@@ -1,5 +1,6 @@
 export { createBuilder, getIR, list, type SchemaBuilder } from "./builder.ts";
 export { lower, type LowerOptions } from "./lower.ts";
+export { printSchemaWithDirectives } from "./print-schema.ts";
 export { connectionEdge, deletedId } from "./mutation-shapes.ts";
 export {
   aliasDirective,
@@ -22,6 +23,7 @@ export {
   relayDirective,
   relayDirectives,
   requiredDirective,
+  semanticNonNullDirective,
   streamConnectionDirective,
   streamDirective,
   throwOnFieldErrorDirective,

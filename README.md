@@ -618,6 +618,117 @@ const { ref: CommentConnRef } = b0.connection(CommentRef)
 See [`docs/RELAY_MUTATIONS.md`](./docs/RELAY_MUTATIONS.md) for the full
 server-and-client walkthrough.
 
+## Semantic non-nullability
+
+> **The headline feature.** Wire stays nullable for resilience; client TypeScript types come back non-null.
+
+GraphQL nullability is two questions, not one:
+
+1. **Wire**: can the server legitimately respond with `null` here?
+2. **Semantic**: when the resolver succeeds, is `null` a valid value?
+
+Idiomatic Relay servers answer **yes** to (1) — partial-response
+resilience: a single field error nulls one field instead of bubbling
+up and tanking the whole query. They answer **no** to (2) — when the
+resolver returns successfully, the value is meaningful and present.
+
+Most GraphQL servers conflate the two. `effect-graphql` separates
+them:
+
+- **Wire is nullable by default.** Every field is `T` (not `T!`)
+  unless you set `nonNull: true`. Field-level errors land as `null`
+  with a typed entry in `errors[]`; the rest of the response still
+  arrives.
+- **Semantic non-nullability is auto-derived.** Effect Schema
+  resolver returns are non-null unless you wrap them in
+  `Schema.NullOr`. So every wire-nullable field is automatically
+  emitted with `@semanticNonNull` — there is no per-field opt-in.
+
+The payoff lands on the Relay client. With `@throwOnFieldError` on
+the operation, Relay v18+ reads `@semanticNonNull` and generates
+**non-null TypeScript types** for the affected positions:
+
+```ts
+// Server-side resolver
+{
+  name: {
+    type: scalars.String,                 // wire: String  (nullable)
+    resolve: () => Effect.succeed("ok"),  // success: string (non-null)
+  },
+}
+```
+
+```graphql
+# Generated SDL (printSchemaWithDirectives output)
+type User {
+  name: String @semanticNonNull
+}
+```
+
+```graphql
+# Client query — opt into the typed-error semantics:
+query UserQuery @throwOnFieldError {
+  user { name }
+}
+```
+
+```ts
+// Relay-generated TS — name is `string`, NOT `string | null | undefined`:
+const data = useFragment(...)
+data.user.name.length  // ✓ no narrowing required
+```
+
+Without the directive, every field on the client comes back
+`T | null | undefined` because the wire is nullable. With it, fields
+that the server promises will succeed-or-throw return `T`.
+
+### Auto-emit policy
+
+The framework decides per field, with no flag to flip:
+
+| Wire shape       | `@semanticNonNull` emitted as     |
+| ---------------- | --------------------------------- |
+| `String`         | `@semanticNonNull` (default `[0]`)|
+| `String!`        | — (wire-non-null is stronger)     |
+| `[String]`       | `@semanticNonNull(levels: [0, 1])`|
+| `[String!]`      | `@semanticNonNull` (default `[0]`)|
+| `[String]!`      | `@semanticNonNull(levels: [1])`   |
+| `[String!]!`     | —                                 |
+
+`levels` indexes list depth: `0` is the outermost type, `1` is the
+list item, `2` is an item of an item, etc. Every wire-nullable
+position contributes a level.
+
+### Opt-out (rare)
+
+If a field genuinely returns `null` on success — e.g. a viewer that
+may not be logged in — set `semanticNonNull: false`:
+
+```ts
+{
+  currentUser: {
+    type: UserRef,            // nullable on the wire (default)
+    semanticNonNull: false,   // …and nullable in TS, too
+    resolve: (_, __, ctx) =>
+      ctx.get(CurrentUser).pipe(Effect.option),
+  },
+}
+```
+
+### Printing the SDL
+
+`graphql-js`'s `printSchema` strips applied directives. Use
+`printSchemaWithDirectives` from `effect-graphql` to emit SDL that
+preserves `@semanticNonNull` so `relay-compiler` can pick it up:
+
+```ts
+import { printSchemaWithDirectives } from "effect-graphql"
+
+await Bun.write("schema.graphql", printSchemaWithDirectives(schema))
+```
+
+Point `relay-compiler`'s `schema` config at that file.
+
 ## Custom scalars via Effect Schema
 
 Custom scalars are declared with `builder.scalar(name, { schema })`,

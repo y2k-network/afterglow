@@ -154,6 +154,16 @@ export interface FieldConfig<
   readonly type: TRef;
   /** Default false — resolver error becomes `null` instead of bubbling. */
   readonly nonNull?: boolean;
+  /**
+   * Emit `@semanticNonNull` on wire-nullable positions of this field. Default
+   * `true`: every position made wire-nullable by the framework is annotated as
+   * semantically non-null on success, since the Effect Schema resolver return
+   * type is non-null unless the user wraps it in `Schema.NullOr`. Set `false`
+   * to suppress emission (e.g. when the resolver legitimately returns null on
+   * success). When `true` is set explicitly on a wire-non-null field the
+   * directive is skipped anyway — the wire-non-null is already stronger.
+   */
+  readonly semanticNonNull?: boolean;
   readonly description?: string;
   readonly args?: Record<string, ArgValue>;
   readonly resolve: FieldResolver<

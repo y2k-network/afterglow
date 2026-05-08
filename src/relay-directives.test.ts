@@ -107,6 +107,7 @@ describe("relayDirectives()", () => {
         "refetchable",
         "relay",
         "required",
+        "semanticNonNull",
         "stream",
         "stream_connection",
         "throwOnFieldError",
@@ -114,8 +115,8 @@ describe("relayDirectives()", () => {
         "waterfall",
       ].sort(),
     );
-    // 26 distinct directives currently.
-    expect(all.length).toBe(26);
+    // 27 distinct directives currently.
+    expect(all.length).toBe(27);
   });
 
   test("subsumes T11's @match and @module exactly", () => {

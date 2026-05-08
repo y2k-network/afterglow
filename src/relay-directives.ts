@@ -122,6 +122,37 @@ export const catchDirective: GraphQLDirective = new GraphQLDirective({
   },
 });
 
+/**
+ * `@semanticNonNull(levels: [Int] = [0]) on FIELD_DEFINITION` — declares that
+ * a wire-nullable position is *semantically* non-null on success. Combined
+ * with `@throwOnFieldError` on the operation, Relay v18+ generates non-null
+ * TypeScript types for the field even though the wire shape allows null
+ * (which we keep nullable for partial-response resilience).
+ *
+ * Spec references:
+ *   - graphql-spec PR #1065 (semantic non-null directive proposal)
+ *   - Relay's semantic nullability guide:
+ *     https://relay.dev/docs/guides/semantic-nullability/
+ *
+ * The `levels` arg names the list-depth levels where the position is
+ * semantically non-null, with `0` referring to the outermost type. For a
+ * scalar field the default `[0]` is correct. For nested lists `[T]`, the
+ * inner position is level 1, the outer is level 0; an annotation of
+ * `[0, 1]` says both are semantically non-null.
+ */
+export const semanticNonNullDirective: GraphQLDirective = new GraphQLDirective({
+  name: "semanticNonNull",
+  description:
+    "Marks a wire-nullable position as semantically non-null on success. Relay clients with @throwOnFieldError generate non-null TS types for these positions.",
+  locations: [DirectiveLocation.FIELD_DEFINITION],
+  args: {
+    levels: {
+      type: new GraphQLList(GraphQLInt),
+      defaultValue: [0],
+    },
+  },
+});
+
 // ──────────────────────────────────────────────────────────────────────────
 // Connection / pagination
 
@@ -392,6 +423,7 @@ export function relayDirectives(): ReadonlyArray<GraphQLDirective> {
     requiredDirective,
     throwOnFieldErrorDirective,
     catchDirective,
+    semanticNonNullDirective,
     // connection / pagination
     connectionDirective,
     streamConnectionDirective,
