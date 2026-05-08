@@ -103,7 +103,7 @@ const SCALAR_FRAG_KEY = Symbol("v2/scalar-frag");
 // Field — used inside Node/Object `fields:` blocks
 // ---------------------------------------------------------------------------
 
-export function field<T, TParent = any, R = never, A extends ArgDefs | undefined = undefined>(
+export function field<TParent, T, R = never, A extends ArgDefs | undefined = undefined>(
   type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top,
   options?: FieldOptions<TParent, T, A extends ArgDefs ? ArgsShape<A> : {}, R> & { args?: A },
 ): FieldDef<TParent, R> {
@@ -155,6 +155,14 @@ const outputTypeToIR = (t: FieldOutputType | ConnectionType<unknown>): IROutputT
   // ConnectionType (carries its node ctor name)
   if (typeof t === "object" && t !== null && CONNECTION_NODE_KEY in (t as object)) {
     const nodeName = (t as unknown as Record<symbol, unknown>)[CONNECTION_NODE_KEY] as string;
+    // Auto-register the connection IR fragment so users don't need Connection.layer().
+    const connFrag: IRConnectionFragment = {
+      kind: "connection",
+      name: `${nodeName}Connection`,
+      edgeName: `${nodeName}Edge`,
+      nodeTypeName: nodeName,
+    };
+    recordFragment(connFrag);
     return { kind: "named", name: `${nodeName}Connection` };
   }
   // Scalar def from Scalar(...) — register on demand
@@ -351,78 +359,116 @@ const argsToIR = (args: ArgDefs): Record<string, { schema: Schema.Top; descripti
 // Node.layer
 // ---------------------------------------------------------------------------
 
-export interface NodeConfig<T, RFields, RLoad, RViewer> {
-  readonly fields?: Record<string, unknown>;
-  /**
-   * Loader for `node(id: ID!)` and refetches. `id` has the typename prefix
-   * already stripped — it's the raw record id.
-   */
-  readonly load: (id: string) => Effect.Effect<T | null, any, RLoad>;
-  /** When supplied, registers `viewer: T` on the root Query type. */
-  readonly viewer?: () => Effect.Effect<T, any, RViewer>;
-  readonly description?: string;
-  /** Phantom witness to thread RFields into the layer's RIn — populated by
-   *  field resolvers. The user does not set this. */
-  readonly _rFields?: (r: RFields) => RFields;
-}
+/**
+ * What's accepted in a Node/Object's `fields:` slot.
+ *
+ * Carries the parent type `T` so that `field(...)` calls inside the slot infer
+ * `parent: T` via TypeScript's contextual typing — this is the mechanism that
+ * eliminates the `parent: any` leak in resolvers. A typo like `(u) => u.idd`
+ * is a compile error because `u: User` is contextually inferred from the
+ * surrounding `Record<string, NodeFieldEntry<User>>` slot.
+ *
+ * The four shapes:
+ *   - `FieldDef<T, R>`      — `field(type, { resolve: (parent: T) => ... })`
+ *   - `Schema.Top`          — pass-through: `title: Schema.String`
+ *   - `ScalarType<X>`       — pass-through to a custom scalar: `at: DateScalar`
+ *   - `SchemaClass<X>` etc. — pass-through to a Node/Object type
+ */
+type NodeFieldEntry<T> =
+  | FieldDef<T, any>
+  | Schema.Top
+  | ScalarType<any>
+  | SchemaClass<any>
+  | IDMarker;
 
+/**
+ * `GraphQL.Node.layer(User)({...})` is curried so TypeScript can infer the
+ * parent type `T` for every field's resolver. The first call pins `T`; the
+ * second call's `fields:` slot is typed as `Record<string, NodeFieldEntry<T>>`,
+ * which contextual-types the `parent` argument of every `field(...)` resolver
+ * to `T` — no manual annotations, no `any`.
+ *
+ * Why curried? TypeScript can't infer two unrelated generics from a single
+ * call when one is the constructor's instance type and the other is the
+ * resolver's `R` from `Effect.gen`. Effect itself uses the same trick
+ * (`Layer.effect(Tag)(effect)` — `Layer.d.ts:941`), so this reads as a familiar
+ * idiom rather than a workaround.
+ */
 export const Node = {
-  layer<T, RLoad = never, RViewer = never>(
-    cls: SchemaClass<T>,
-    config: {
-      readonly fields?: Record<string, unknown>;
-      readonly load: (id: string) => Effect.Effect<T | null, any, RLoad>;
-      readonly viewer?: () => Effect.Effect<T, any, RViewer>;
-      readonly description?: string;
-    },
-  ): Layer.Layer<never, never, RLoad | RViewer> {
+  layer<T>(cls: SchemaClass<T>) {
     const name = classIdentifier(cls);
+    return <RLoad = never, RViewer = never>(
+      config: {
+        readonly fields?: Record<string, NodeFieldEntry<T>>;
+        readonly load: (id: string) => Effect.Effect<T | null, any, RLoad>;
+        readonly viewer?: () => Effect.Effect<T, any, RViewer>;
+        readonly description?: string;
+      },
+    ): Layer.Layer<never, never, RLoad | RViewer> => {
+      const load = (
+        id: string,
+        ctx: Context.Context<unknown>,
+      ): Effect.Effect<unknown, unknown, unknown> => {
+        try {
+          const eff = config.load(id);
+          return Effect.provide(eff, ctx) as Effect.Effect<unknown, unknown, unknown>;
+        } catch (err) {
+          return Effect.die(err);
+        }
+      };
 
-    const load = (
-      id: string,
-      ctx: Context.Context<unknown>,
-    ): Effect.Effect<unknown, unknown, unknown> => {
-      try {
-        const eff = config.load(id);
-        return Effect.provide(eff, ctx) as Effect.Effect<unknown, unknown, unknown>;
-      } catch (err) {
-        return Effect.die(err);
-      }
-    };
-
-    const viewer = config.viewer
-      ? (ctx: Context.Context<unknown>): Effect.Effect<unknown, unknown, unknown> => {
-          try {
-            const eff = config.viewer!();
-            return Effect.provide(eff, ctx) as Effect.Effect<unknown, unknown, unknown>;
-          } catch (err) {
-            return Effect.die(err);
+      const viewer = config.viewer
+        ? (ctx: Context.Context<unknown>): Effect.Effect<unknown, unknown, unknown> => {
+            try {
+              const eff = config.viewer!();
+              return Effect.provide(eff, ctx) as Effect.Effect<unknown, unknown, unknown>;
+            } catch (err) {
+              return Effect.die(err);
+            }
           }
-        }
-      : undefined;
+        : undefined;
 
-    // Build the IR fragment lazily inside the Layer's effect. This is what
-    // lets transitively-referenced types (custom scalars used by fields)
-    // register themselves into the active build's IR — `outputTypeToIR`
-    // calls `recordFragment` on demand, and that side channel is only
-    // listening while the Layer's effect runs.
-    return Layer.effectDiscard(
-      Effect.sync(() => {
-        const fields: Record<string, IRFieldDef> = {};
-        for (const [fname, fdef] of Object.entries(config.fields ?? {})) {
-          fields[fname] = compileFieldEntry(fname, name, fdef);
-        }
-        const fragment: IRNodeFragment = {
-          kind: "node",
-          name,
-          description: config.description,
-          fields,
-          load,
-          viewer,
-        };
-        recordFragment(fragment);
-      }),
-    ) as unknown as Layer.Layer<never, never, RLoad | RViewer>;
+      // Build the IR fragment lazily inside the Layer's effect. This is what
+      // lets transitively-referenced types (custom scalars used by fields)
+      // register themselves into the active build's IR — `outputTypeToIR`
+      // calls `recordFragment` on demand, and that side channel is only
+      // listening while the Layer's effect runs.
+      return Layer.effectDiscard(
+        Effect.sync(() => {
+          const fields: Record<string, IRFieldDef> = {};
+          for (const [fname, fdef] of Object.entries(config.fields ?? {})) {
+            fields[fname] = compileFieldEntry(fname, name, fdef);
+          }
+          // Auto-synthesize `id: ID!` when the user omits it. The Schema.Class
+          // must have an `id` property (enforced by Relay's Node interface); we
+          // encode it as a global ID at resolve time. If the user DID supply an
+          // `id` field we leave theirs untouched.
+          if (!("id" in fields)) {
+            fields["id"] = {
+              type: { kind: "scalar", name: "ID" },
+              nonNull: true,
+              args: {},
+              resolve: (parent, _args, _ctx, _info) => {
+                const rawId =
+                  typeof parent === "object" && parent !== null
+                    ? String((parent as Record<string, unknown>)["id"] ?? "")
+                    : "";
+                return Effect.succeed(encodeGlobalId(name, rawId));
+              },
+            };
+          }
+          const fragment: IRNodeFragment = {
+            kind: "node",
+            name,
+            description: config.description,
+            fields,
+            load,
+            viewer,
+          };
+          recordFragment(fragment);
+        }),
+      ) as unknown as Layer.Layer<never, never, RLoad | RViewer>;
+    };
   },
 };
 

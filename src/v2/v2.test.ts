@@ -49,7 +49,7 @@ class HarnessTodoStore extends Context.Service<HarnessTodoStore, {
   create(args: { title: string; ownerId: string }): Effect.Effect<HarnessTodo>;
 }>()("HarnessTodoStore") {}
 
-const _UserNode = Node.layer(HarnessUser, {
+const _UserNode = Node.layer(HarnessUser)({
   load: (_id) =>
     Effect.gen(function* () {
       const cu = yield* HarnessCurrentUser;
@@ -62,15 +62,13 @@ const _UserNode = Node.layer(HarnessUser, {
     }),
 });
 
-const _TodoNode = Node.layer(HarnessTodo, {
+const _TodoNode = Node.layer(HarnessTodo)({
   load: (id) =>
     Effect.gen(function* () {
       const store = yield* HarnessTodoStore;
       return yield* store.findById(id);
     }),
 });
-
-const _TodoConn = Connection.layer(HarnessTodo);
 
 const _QueryLayer = Query.layer({
   todos: queryField(Connection(HarnessTodo), {
@@ -98,7 +96,7 @@ type _QueryR = Layer.Services<typeof _QueryLayer>;
 type _AssertQueryR = AssertExact<_QueryR, HarnessTodoStore | HarnessCurrentUser>;
 const _ass3: _AssertQueryR = true;
 
-const _Schema = Layer.mergeAll(_UserNode, _TodoNode, _TodoConn, _QueryLayer);
+const _Schema = Layer.mergeAll(_UserNode, _TodoNode, _QueryLayer);
 type _SchemaR = Layer.Services<typeof _Schema>;
 type _AssertSchemaR = AssertExact<_SchemaR, HarnessTodoStore | HarnessCurrentUser>;
 const _ass4: _AssertSchemaR = true;
@@ -121,6 +119,27 @@ const _withoutConnection = queryField(HarnessTodo, {
   },
 });
 void _withoutConnection;
+
+// ---------------------------------------------------------------------------
+// Parent-type leak guard
+//
+// `Node.layer(User)({...})` is curried so the parent type flows into every
+// `field(...)` resolver via contextual typing. A typo on `parent.someProp`
+// must produce a TS2339 — locking out the `parent: any` regression that
+// the locked positioning explicitly forbids.
+// ---------------------------------------------------------------------------
+
+const _typoGuard = Node.layer(HarnessUser)({
+  fields: {
+    id: field(ID, { resolve: (u) => globalId("HarnessUser", u.id) }), // u: HarnessUser
+    badTypo: field(Schema.String, {
+      // @ts-expect-error — TS2339: Property 'NAME_TYPO_SHOULD_ERROR' does not exist on type 'HarnessUser'
+      resolve: (u) => u.NAME_TYPO_SHOULD_ERROR,
+    }),
+  },
+  load: () => Effect.succeed(null),
+});
+void _typoGuard;
 
 // ---------------------------------------------------------------------------
 // Runtime smoke test — full Todo schema, basic query
@@ -152,9 +171,9 @@ const TodoStoreLive = Layer.effect(TodoStoreT)(
 );
 
 test("smoke: build schema and run a query", async () => {
-  const TodoNode = Node.layer(TodoT, {
+  const TodoNode = Node.layer(TodoT)({
     fields: {
-      id: field(ID, { resolve: (t: TodoT) => globalId("TodoT", t.id) }),
+      id: field(ID, { resolve: (t) => globalId("TodoT", t.id) }),
       title: Schema.String,
       completed: Schema.Boolean,
     },
@@ -197,9 +216,9 @@ test("smoke: build schema and run a query", async () => {
 });
 
 test("smoke: node(id) returns the loaded entity", async () => {
-  const TodoNode = Node.layer(TodoT, {
+  const TodoNode = Node.layer(TodoT)({
     fields: {
-      id: field(ID, { resolve: (t: TodoT) => globalId("TodoT", t.id) }),
+      id: field(ID, { resolve: (t) => globalId("TodoT", t.id) }),
       title: Schema.String,
     },
     load: (id) =>
@@ -231,10 +250,12 @@ test("smoke: node(id) returns the loaded entity", async () => {
   await runtime.dispose();
 });
 
-test("smoke: Connection layer + queryField with pagination args", async () => {
-  const TodoNode = Node.layer(TodoT, {
+test("smoke: Connection auto-registers; no Connection.layer() call needed", async () => {
+  // Connection.layer() is NOT called — queryField(Connection(TodoT), ...) auto-registers
+  // the TodoTConnection and TodoTEdge types as a side effect of being referenced.
+  // id: ID! is also NOT declared — Node.layer auto-synthesizes it from TodoT.id.
+  const TodoNode = Node.layer(TodoT)({
     fields: {
-      id: field(ID, { resolve: (t: TodoT) => globalId("TodoT", t.id) }),
       title: Schema.String,
     },
     load: (id) =>
@@ -243,8 +264,6 @@ test("smoke: Connection layer + queryField with pagination args", async () => {
         return yield* store.findById(id);
       }),
   });
-
-  const TodoConn = Connection.layer(TodoT);
 
   const QueryLayer = Query.layer({
     todos: queryField(Connection(TodoT), {
@@ -261,7 +280,7 @@ test("smoke: Connection layer + queryField with pagination args", async () => {
     }),
   });
 
-  const SchemaLayer = Layer.mergeAll(TodoNode, TodoConn, QueryLayer);
+  const SchemaLayer = Layer.mergeAll(TodoNode, QueryLayer);
   const runtime = ManagedRuntime.make(TodoStoreLive);
   const schema = buildSchema(SchemaLayer, runtime);
 
@@ -288,9 +307,9 @@ test("smoke: mutation with input + deletedId helper", async () => {
     title: Schema.String,
   }) {}
 
-  const TodoNode = Node.layer(TodoT, {
+  const TodoNode = Node.layer(TodoT)({
     fields: {
-      id: field(ID, { resolve: (t: TodoT) => globalId("TodoT", t.id) }),
+      id: field(ID, { resolve: (t) => globalId("TodoT", t.id) }),
       title: Schema.String,
     },
     load: (id) =>
@@ -322,7 +341,7 @@ test("smoke: mutation with input + deletedId helper", async () => {
   });
 
   const SchemaLayer = Layer.mergeAll(TodoNode, QueryLayer, MutationLayer);
-  const schema = buildSchema(SchemaLayer, null as any);
+  const schema = buildSchema(SchemaLayer, null);
 
   const sdl = printSchema(schema);
   expect(sdl).toContain("type Mutation");
@@ -346,9 +365,9 @@ test("smoke: custom scalar via GraphQL.Scalar", async () => {
     at: Schema.DateFromString,
   }) {}
 
-  const EventNode = Node.layer(Event, {
+  const EventNode = Node.layer(Event)({
     fields: {
-      id: field(ID, { resolve: (e: Event) => globalId("Event", e.id) }),
+      id: field(ID, { resolve: (e) => globalId("Event", e.id) }),
       at: field(DateScalar),
     },
     load: () => Effect.succeed(null),
@@ -361,7 +380,7 @@ test("smoke: custom scalar via GraphQL.Scalar", async () => {
   });
 
   const SchemaLayer = Layer.mergeAll(EventNode, QueryLayer);
-  const schema = buildSchema(SchemaLayer, null as any);
+  const schema = buildSchema(SchemaLayer, null);
 
   const sdl = printSchema(schema);
   expect(sdl).toContain("scalar HarnessDate");
@@ -371,9 +390,9 @@ test("smoke: custom scalar via GraphQL.Scalar", async () => {
 test("smoke: viewer field is registered when a Node.layer supplies one", async () => {
   class Me extends Schema.Class<Me>("Me")({ id: Schema.String }) {}
 
-  const MeNode = Node.layer(Me, {
+  const MeNode = Node.layer(Me)({
     fields: {
-      id: field(ID, { resolve: (m: Me) => globalId("Me", m.id) }),
+      id: field(ID, { resolve: (m) => globalId("Me", m.id) }),
     },
     load: (id) => Effect.succeed(new Me({ id })),
     viewer: () => Effect.succeed(new Me({ id: "viewer-1" })),
@@ -381,7 +400,7 @@ test("smoke: viewer field is registered when a Node.layer supplies one", async (
 
   // Even with no Query.layer, viewer alone makes the schema valid.
   const SchemaLayer = Layer.mergeAll(MeNode);
-  const schema = buildSchema(SchemaLayer, null as any);
+  const schema = buildSchema(SchemaLayer, null);
 
   const sdl = printSchema(schema);
   expect(sdl).toContain("viewer: Me");
@@ -428,10 +447,8 @@ test("smoke: full integration — viewer + connection + mutation with per-reques
 
   class Viewer extends Schema.Class<Viewer>("Viewer")({ id: Schema.String }) {}
 
-  const ViewerNode = Node.layer(Viewer, {
-    fields: {
-      id: field(ID, { resolve: (v: Viewer) => globalId("Viewer", v.id) }),
-    },
+  // id: ID! auto-synthesized from Viewer.id; no field(ID, ...) needed
+  const ViewerNode = Node.layer(Viewer)({
     load: (id) => Effect.succeed(new Viewer({ id })),
     viewer: () =>
       Effect.gen(function* () {
@@ -440,9 +457,9 @@ test("smoke: full integration — viewer + connection + mutation with per-reques
       }),
   });
 
-  const TodoNode = Node.layer(TodoT, {
+  // id: ID! auto-synthesized; Connection.layer(TodoT) not needed — auto-registered
+  const TodoNode = Node.layer(TodoT)({
     fields: {
-      id: field(ID, { resolve: (t: TodoT) => globalId("TodoT", t.id) }),
       title: Schema.String,
       completed: Schema.Boolean,
     },
@@ -452,8 +469,6 @@ test("smoke: full integration — viewer + connection + mutation with per-reques
         return yield* store.findById(id);
       }),
   });
-
-  const TodoConn = Connection.layer(TodoT);
 
   const QueryLayer = Query.layer({
     todos: queryField(Connection(TodoT), {
@@ -488,7 +503,7 @@ test("smoke: full integration — viewer + connection + mutation with per-reques
     }),
   });
 
-  const SchemaLayer = Layer.mergeAll(ViewerNode, TodoNode, TodoConn, QueryLayer, MutationLayer);
+  const SchemaLayer = Layer.mergeAll(ViewerNode, TodoNode, QueryLayer, MutationLayer);
 
   // Type assertion: union of services from all layers
   type _Services = Layer.Services<typeof SchemaLayer>;

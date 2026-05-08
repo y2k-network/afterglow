@@ -1,18 +1,35 @@
 /**
- * Public `GraphQL` namespace for v2 — the Layer-driven API.
+ * Public surface for `effect-graphql` v2 — the Layer-driven API.
+ *
+ * Two equally valid import styles:
+ *
+ * ```ts
+ * // Namespace style (matches Effect's `Layer.mergeAll`, `Effect.gen` shape):
+ * import * as GraphQL from "effect-graphql/v2"
+ *
+ * GraphQL.Node.layer(User)({ load: ..., viewer: ... })
+ * GraphQL.Query.layer({ todos: GraphQL.queryField(...) })
+ * GraphQL.toHttpApp(SchemaLayer, { runtime, requestContext })
+ *
+ * // Or named imports if you prefer:
+ * import { Node, Query, queryField, toHttpApp } from "effect-graphql/v2"
+ * ```
  *
  * @example
  * ```ts
- * import { GraphQL } from "effect-graphql/v2"
- * import { Layer, ManagedRuntime, Schema } from "effect"
+ * import * as GraphQL from "effect-graphql/v2"
+ * import { Layer, ManagedRuntime, Schema, Effect } from "effect"
  *
  * class User extends Schema.Class<User>("User")({ id: Schema.String }) {}
  *
- * const UserNode = GraphQL.Node.layer(User, {
+ * const UserNode = GraphQL.Node.layer(User)({
+ *   fields: {
+ *     id: GraphQL.field(GraphQL.ID, { resolve: (u) => GraphQL.globalId("User", u.id) }),
+ *   },
  *   load: (id) => Effect.succeed(new User({ id })),
  * })
  *
- * const SchemaLayer = Layer.mergeAll(UserNode, ...)
+ * const SchemaLayer = Layer.mergeAll(UserNode)
  * const app = GraphQL.toHttpApp(SchemaLayer, { runtime, requestContext })
  * ```
  */
