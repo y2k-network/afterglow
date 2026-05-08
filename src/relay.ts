@@ -12,7 +12,16 @@ import {
   type GraphQLFieldConfigArgumentMap,
   type GraphQLTypeResolver,
 } from "graphql";
-import type { IRNodeType } from "./ir.ts";
+/**
+ * Structural shape needed by the relay primitives below — only `loadOne`
+ * is read. We declare it locally so this module stands alone (no IR dep).
+ */
+interface IRNodeType {
+  readonly loadOne: (
+    id: string,
+    ctx: Context.Context<unknown>,
+  ) => Effect.Effect<unknown, unknown, unknown>;
+}
 
 /**
  * Thrown by `decodeGlobalId` on malformed input. `Data.TaggedError` makes it

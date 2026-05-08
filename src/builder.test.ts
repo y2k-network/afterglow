@@ -1,618 +1,626 @@
+/**
+ * V2 smoke tests — exercise the harness scenarios against the real
+ * implementation (`./builder.ts`, `./http.ts`).
+ *
+ * Inference assertions mirror `docs/v2-inference-harness.ts` against the
+ * actual `GraphQL.Node.layer / Query.layer / ...` exports.
+ */
 import { test, expect } from "bun:test";
-import { Context, Effect, ManagedRuntime, Layer, Schema } from "effect";
-import { graphql, printSchema } from "graphql";
-import { createBuilder, getIR, list } from "./builder.ts";
-import type { SchemaBuilder } from "./builder.ts";
-import { connectionEdge } from "./mutation-shapes.ts";
-import { scalars } from "./scalars.ts";
+import {
+  Context,
+  Effect,
+  Layer,
+  ManagedRuntime,
+  Ref,
+  Schema,
+} from "effect";
+import { execute, parse, printSchema } from "graphql";
+import { GraphQL } from "./index.ts";
+import { buildSchema } from "./http.ts";
+import { Node, Query, Mutation, Connection, Subscription, queryField, mutationField, subscriptionField, field, resolve, ID, Scalar, globalId, parseGlobalId, deletedId, toConnection } from "./builder.ts";
 
-class Database extends Context.Service<
-  Database,
-  { readonly query: (sql: string) => Effect.Effect<string> }
->()("Database") {}
+// ---------------------------------------------------------------------------
+// Type-level inference assertions
+// ---------------------------------------------------------------------------
 
-class UserSession extends Context.Service<
-  UserSession,
-  { readonly userId: string }
->()("UserSession") {}
+type AssertExact<Actual, Expected> = [Actual] extends [Expected]
+  ? [Expected] extends [Actual]
+    ? true
+    : { error: "Actual is narrower than Expected"; actual: Actual; expected: Expected }
+  : { error: "Actual does not extend Expected"; actual: Actual; expected: Expected };
 
-test("createBuilder produces an empty IR", () => {
-  const b = createBuilder();
-  const ir = getIR(b);
-  expect(ir.types.size).toBe(0);
-  expect(ir.queryFields).toBeUndefined();
-});
+class HarnessUser extends Schema.Class<HarnessUser>("HarnessUser")({
+  id: Schema.String,
+}) {}
 
-test("registration is immutable: original builder is unchanged after chained call", () => {
-  const b0 = createBuilder();
-  const { builder: b1 } = b0.objectType<{ name: string }>("Post", {
-    fields: () => ({}),
-  });
-  expect(getIR(b0).types.has("Post")).toBe(false);
-  expect(getIR(b1).types.has("Post")).toBe(true);
-});
+class HarnessTodo extends Schema.Class<HarnessTodo>("HarnessTodo")({
+  id: Schema.String,
+  title: Schema.String,
+  completed: Schema.Boolean,
+}) {}
 
-test("node() registers in nodeTypes map and adds Node interface", () => {
-  type User = { name: string };
-  const { ref, builder } = createBuilder().node<User>("User", {
-    fields: () => ({}),
-    loadOne: (_id, _ctx) => Effect.succeed(null),
-  });
-  expect(ref.typename).toBe("User");
-  const ir = getIR(builder);
-  const irType = ir.types.get("User");
-  expect(irType?.kind).toBe("node");
-  expect(ir.nodeTypes.has("User")).toBe(true);
-  if (irType?.kind === "node" || irType?.kind === "object") {
-    expect(irType.interfaces).toContain("Node");
-  }
-});
+class HarnessCurrentUser extends Context.Service<HarnessCurrentUser, { readonly id: string }>()(
+  "HarnessCurrentUser",
+) {}
 
-test("connection() synthesizes ${Name}Connection in IR", () => {
-  const { ref: userRef, builder: b1 } = createBuilder().node<{ id: string }>(
-    "User",
-    {
-      fields: () => ({}),
-      loadOne: () => Effect.succeed(null),
-    },
-  );
-  const { ref: connRef, builder: b2 } = b1.connection(userRef);
-  expect(connRef.name).toBe("UserConnection");
-  expect(connRef.edgeName).toBe("UserEdge");
-  expect(getIR(b2).types.get("UserConnection")?.kind).toBe("connection");
-});
+class HarnessTodoStore extends Context.Service<HarnessTodoStore, {
+  findById(id: string): Effect.Effect<HarnessTodo | null>;
+  list(args: { first?: number; after?: string; ownerId: string }): Effect.Effect<{ rows: HarnessTodo[]; hasNextPage: boolean }>;
+  create(args: { title: string; ownerId: string }): Effect.Effect<HarnessTodo>;
+}>()("HarnessTodoStore") {}
 
-test("input() and scalar() do not widen R", () => {
-  const b0 = createBuilder();
-  const { builder: b1 } = b0.input("UserInput", Schema.Struct({ name: Schema.String }));
-  // type-level: b1 should still be SchemaBuilder<never>.
-  // We verify by assigning to an explicitly-typed binding.
-  const _check: SchemaBuilder<never> = b1;
-  expect(_check).toBeDefined();
-});
-
-test("input() annotates the schema with `identifier` so schema-bridge can name it", () => {
-  // Anonymous Struct (no identifier annotation) — builder.input should add one.
-  const anon = Schema.Struct({ name: Schema.String });
-  const { ref, builder } = createBuilder().input("UserInput", anon);
-
-  // The IR's stored schema and the returned ref's schema must both carry the identifier.
-  const ir = getIR(builder);
-  const irInput = ir.types.get("UserInput");
-  expect(irInput?.kind).toBe("input");
-  if (irInput?.kind === "input") {
-    expect(irInput.schema.ast.annotations?.identifier).toBe("UserInput");
-  }
-  expect(ref.schema.ast.annotations?.identifier).toBe("UserInput");
-
-  // Original user schema is unaffected (annotate returns a rebuilt schema).
-  expect(anon.ast.annotations?.identifier).toBeUndefined();
-});
-
-test("R accumulates across chained calls via the explicit <T, R2> generic", () => {
-  type User = { name: string };
-  const { builder: b1 } = createBuilder().objectType<User, Database>("User", {
-    fields: () => ({
-      name: {
-        type: scalars.String,
-        resolve: () =>
-          Effect.gen(function* () {
-            const _db = yield* Database;
-            return "hi";
-          }),
-      },
+const _UserNode = Node.layer(HarnessUser)({
+  load: (_id) =>
+    Effect.gen(function* () {
+      const cu = yield* HarnessCurrentUser;
+      return new HarnessUser({ id: cu.id });
     }),
-  });
-  // After the registration, R = Database (contributed by the explicit R2).
-  const _db: SchemaBuilder<Database> = b1;
-  // Then add a queryType — R widens to Database | UserSession.
-  const b2 = b1.queryType<UserSession>({
-    fields: () => ({
-      me: {
-        type: scalars.String,
-        resolve: () =>
-          Effect.gen(function* () {
-            const session = yield* UserSession;
-            return session.userId;
-          }),
-      },
+  viewer: () =>
+    Effect.gen(function* () {
+      const cu = yield* HarnessCurrentUser;
+      return new HarnessUser({ id: cu.id });
     }),
-  });
-  const _both: SchemaBuilder<Database | UserSession> = b2;
-  expect(_db).toBeDefined();
-  expect(_both).toBeDefined();
 });
 
-test("scalars namespace exposes the GraphQL spec built-ins", () => {
-  expect(scalars.String.name).toBe("String");
-  expect(scalars.Int.name).toBe("Int");
-  expect(scalars.Float.name).toBe("Float");
-  expect(scalars.Boolean.name).toBe("Boolean");
-  expect(scalars.ID.name).toBe("ID");
-  // All carry the ScalarOutputRef discriminator.
-  expect(scalars.String._tag).toBe("ScalarOutputRef");
-  expect(scalars.String.kind).toBe("scalar");
+const _TodoNode = Node.layer(HarnessTodo)({
+  load: (id) =>
+    Effect.gen(function* () {
+      const store = yield* HarnessTodoStore;
+      return yield* store.findById(id);
+    }),
 });
 
-test("scalars refs are usable as FieldConfig.type", () => {
-  const { builder } = createBuilder().objectType<{ id: string; age: number }>("Thing", {
-    fields: () => ({
-      id: { type: scalars.ID, resolve: () => Effect.succeed("x") },
-      age: { type: scalars.Int, resolve: () => Effect.succeed(1) },
-    }),
-  });
-  // Field thunk evaluates without throwing.
-  const ir = getIR(builder);
-  const irType = ir.types.get("Thing");
-  expect(irType?.kind).toBe("object");
-  if (irType?.kind === "object") {
-    const fields = irType.fields();
-    const idType = fields.id?.type;
-    const ageType = fields.age?.type;
-    if (idType && idType.kind !== "list") expect(idType.name).toBe("ID");
-    if (ageType && ageType.kind !== "list") expect(ageType.name).toBe("Int");
-  }
-});
-
-test("builder.arg(schema) returns an ArgDef wrapping the schema", () => {
-  const b = createBuilder();
-  const ageArg = b.arg(Schema.Number);
-  expect(ageArg.schema).toBe(Schema.Number);
-  // Usable inside FieldConfig.args.
-  const { builder } = b.objectType<{ name: string }>("Person", {
-    fields: () => ({
-      greeting: {
-        type: scalars.String,
-        args: { age: b.arg(Schema.Number) },
-        resolve: (_p, _a) => Effect.succeed("hi"),
-      },
-    }),
-  });
-  const ir = getIR(builder);
-  const irType = ir.types.get("Person");
-  if (irType?.kind === "object") {
-    const fields = irType.fields();
-    expect(fields.greeting?.args.age?.schema).toBe(Schema.Number);
-  }
-});
-
-test("toSchema throws when no query type is registered", () => {
-  const b = createBuilder();
-  // @ts-expect-error — runtime arg shape is intentionally not constructed in this test.
-  expect(() => b.toSchema(undefined)).toThrow(/at least one query field is required/);
-});
-
-test("connection() populates connRef.edgeRef matching edgeName", () => {
-  const { ref: postRef, builder: b1 } = createBuilder().node<{ id: string }>(
-    "Post",
-    {
-      fields: () => ({}),
-      loadOne: () => Effect.succeed(null),
-    },
-  );
-  const { ref: connRef } = b1.connection(postRef);
-  expect(connRef.edgeRef).toBeDefined();
-  expect(connRef.edgeRef.name).toBe(connRef.edgeName);
-  expect(connRef.edgeRef._tag).toBe("NamedOutputRef");
-  expect(connRef.edgeRef.kind).toBe("named");
-});
-
-test("connRef.edgeRef is usable as FieldConfig.type", () => {
-  type Post = { id: string; title: string };
-  const { ref: postRef, builder: b1 } = createBuilder().node<Post>("Post", {
-    fields: () => ({
-      id: { type: scalars.ID, nonNull: true, resolve: (p) => Effect.succeed(p.id) },
-      title: { type: scalars.String, resolve: (p) => Effect.succeed(p.title) },
-    }),
-    loadOne: () => Effect.succeed(null),
-  });
-  const { ref: postsConnRef, builder: b2 } = b1.connection(postRef);
-
-  const { ref: payloadRef, builder: b3 } = b2.objectType<{
-    newPostEdge: { cursor: string; node: Post };
-  }>("AddPostPayload", {
-    fields: () => ({
-      newPostEdge: {
-        type: postsConnRef.edgeRef,
-        resolve: (p) => Effect.succeed(p.newPostEdge),
-      },
-    }),
-  });
-
-  const b4 = b3.queryType({
-    fields: () => ({
-      ping: { type: scalars.String, resolve: () => Effect.succeed("ok") },
-    }),
-  }).mutationType({
-    fields: () => ({
-      addPost: {
-        type: payloadRef,
-        resolve: () =>
-          Effect.succeed({
-            newPostEdge: connectionEdge("c1", { id: "1", title: "Hi" }),
-          }),
-      },
-    }),
-  });
-
-  const schema = b4.toSchema(null as never);
-  const sdl = printSchema(schema);
-  expect(sdl).toContain("type AddPostPayload");
-  expect(sdl).toContain("newPostEdge: PostEdge");
-  expect(sdl).toContain("type PostEdge");
-});
-
-test("list(scalars.ID) returns a ListOutputRef wrapping the inner ref", () => {
-  const ref = list(scalars.ID);
-  expect(ref._tag).toBe("ListOutputRef");
-  expect(ref.kind).toBe("list");
-  expect(ref.itemNonNull).toBe(false);
-  expect(ref.inner.kind).toBe("scalar");
-  if (ref.inner.kind === "scalar") {
-    expect(ref.inner.name).toBe("ID");
-  }
-});
-
-test("list(scalars.ID, { itemNonNull: true }) lowers to [ID!]", () => {
-  const { builder } = createBuilder().objectType<{ tags: ReadonlyArray<string> }>(
-    "Item",
-    {
-      fields: () => ({
-        tags: {
-          type: list(scalars.ID, { itemNonNull: true }),
-          resolve: (p) => Effect.succeed(p.tags),
-        },
-      }),
-    },
-  );
-  const schema = builder
-    .queryType({
-      fields: () => ({
-        ping: { type: scalars.String, resolve: () => Effect.succeed("ok") },
-      }),
-    })
-    .toSchema(null as never);
-  const sdl = printSchema(schema);
-  expect(sdl).toMatch(/tags: \[ID!\](?!!)/);
-  // No outer non-null because nonNull was not set on the field config.
-  expect(sdl).not.toMatch(/tags: \[ID!\]!/);
-});
-
-test("list + nonNull on field lowers to [T!]!", () => {
-  const { builder } = createBuilder().objectType<{ tags: ReadonlyArray<string> }>(
-    "Item",
-    {
-      fields: () => ({
-        tags: {
-          type: list(scalars.ID, { itemNonNull: true }),
-          nonNull: true,
-          resolve: (p) => Effect.succeed(p.tags),
-        },
-      }),
-    },
-  );
-  const schema = builder
-    .queryType({
-      fields: () => ({
-        ping: { type: scalars.String, resolve: () => Effect.succeed("ok") },
-      }),
-    })
-    .toSchema(null as never);
-  expect(printSchema(schema)).toMatch(/tags: \[ID!\]!/);
-});
-
-test("end-to-end: mutation returning connRef.edgeRef resolves correctly", async () => {
-  type Post = { id: string; title: string };
-
-  const { ref: postRef, builder: b1 } = createBuilder().node<Post>("Post", {
-    fields: () => ({
-      id: { type: scalars.ID, nonNull: true, resolve: (p) => Effect.succeed(p.id) },
-      title: { type: scalars.String, resolve: (p) => Effect.succeed(p.title) },
-    }),
-    loadOne: () => Effect.succeed(null),
-  });
-  const { ref: postsConnRef, builder: b2 } = b1.connection(postRef);
-  const { ref: payloadRef, builder: b3 } = b2.objectType<{
-    newPostEdge: { cursor: string; node: Post };
-  }>("AddPostPayload", {
-    fields: () => ({
-      newPostEdge: {
-        type: postsConnRef.edgeRef,
-        resolve: (p) => Effect.succeed(p.newPostEdge),
-      },
-    }),
-  });
-
-  const b4 = b3
-    .queryType({
-      fields: () => ({
-        ping: { type: scalars.String, resolve: () => Effect.succeed("ok") },
-      }),
-    })
-    .mutationType({
-      fields: () => ({
-        addPost: {
-          type: payloadRef,
-          resolve: () =>
-            Effect.succeed({
-              newPostEdge: connectionEdge("c1", { id: "1", title: "Hello" }),
-            }),
-        },
-      }),
-    });
-
-  const runtime = ManagedRuntime.make(Layer.empty);
-  const schema = b4.toSchema(runtime as never);
-  const result = await graphql({
-    contextValue: Context.empty(),
-    schema,
-    source: `mutation {
-      addPost {
-        newPostEdge { cursor node { id title } }
-      }
-    }`,
-  });
-  expect(result.errors).toBeUndefined();
-  expect(result.data).toEqual({
-    addPost: {
-      newPostEdge: { cursor: "c1", node: { id: "1", title: "Hello" } },
-    },
-  });
-  await runtime.dispose();
-});
-
-// --- T29 — R/ReqR split + ergonomics ----------------------------------------
-
-class TodoStore_T29 extends Context.Service<
-  TodoStore_T29,
-  { readonly findById: (id: string) => Effect.Effect<{ id: string } | null> }
->()("TodoStore_T29") {}
-
-class CurrentUser_T29 extends Context.Service<
-  CurrentUser_T29,
-  { readonly id: string }
->()("CurrentUser_T29") {}
-
-test("toSchema(runtime) infers RA from the runtime and yields the residual ReqR", () => {
-  // R accumulates BOTH server-scoped TodoStore (via loadOne) and per-request
-  // CurrentUser (via a viewer resolver). Builder is SchemaBuilder<TodoStore | CurrentUser>.
-  const { ref: userRef, builder: b1 } = createBuilder().objectType<
-    { id: string },
-    never
-  >("Viewer", {
-    fields: () => ({
-      id: { type: scalars.ID, nonNull: true, resolve: (u) => Effect.succeed(u.id) },
-    }),
-  });
-  // Explicit `<T, R2>`: parent type and the resolver-service requirement
-  // contributed by `loadOne`.
-  const { builder: b2 } = b1.node<{ id: string }, TodoStore_T29>("Item", {
-    fields: () => ({
-      id: { type: scalars.ID, nonNull: true, resolve: (t) => Effect.succeed(t.id) },
-    }),
-    loadOne: (id) =>
+const _QueryLayer = Query.layer({
+  todos: queryField(Connection(HarnessTodo), {
+    resolve: (_root, args) =>
       Effect.gen(function* () {
-        const store = yield* TodoStore_T29;
+        const store = yield* HarnessTodoStore;
+        const cu = yield* HarnessCurrentUser;
+        const _f: number | undefined = args.first; // pagination args present
+        const _a: string | undefined = args.after;
+        const page = yield* store.list({ ownerId: cu.id });
+        return toConnection(page.rows, { cursor: (t) => t.id, hasNextPage: page.hasNextPage });
+      }),
+  }),
+});
+
+type _UserNodeR = Layer.Services<typeof _UserNode>;
+type _AssertUserNodeR = AssertExact<_UserNodeR, HarnessCurrentUser>;
+const _ass1: _AssertUserNodeR = true;
+
+type _TodoNodeR = Layer.Services<typeof _TodoNode>;
+type _AssertTodoNodeR = AssertExact<_TodoNodeR, HarnessTodoStore>;
+const _ass2: _AssertTodoNodeR = true;
+
+type _QueryR = Layer.Services<typeof _QueryLayer>;
+type _AssertQueryR = AssertExact<_QueryR, HarnessTodoStore | HarnessCurrentUser>;
+const _ass3: _AssertQueryR = true;
+
+const _Schema = Layer.mergeAll(_UserNode, _TodoNode, _QueryLayer);
+type _SchemaR = Layer.Services<typeof _Schema>;
+type _AssertSchemaR = AssertExact<_SchemaR, HarnessTodoStore | HarnessCurrentUser>;
+const _ass4: _AssertSchemaR = true;
+
+// No `any` leaked
+type _AssertNotAny = [0] extends [1 & _SchemaR] ? never : true;
+const _ass5: _AssertNotAny = true;
+
+void _ass1; void _ass2; void _ass3; void _ass4; void _ass5;
+
+// ---------------------------------------------------------------------------
+// Connection footgun: ensure `args: {}` on plain-T queryField
+// ---------------------------------------------------------------------------
+
+const _withoutConnection = queryField(HarnessTodo, {
+  resolve: (_root, args) => {
+    // @ts-expect-error — TS2339: Property 'first' does not exist on type '{}'
+    const _bad: number = args.first;
+    return Effect.succeed(new HarnessTodo({ id: "1", title: "t", completed: false }));
+  },
+});
+void _withoutConnection;
+
+// ---------------------------------------------------------------------------
+// Parent-type leak guard
+//
+// `Node.layer(User)({...})` is curried so the parent type flows into every
+// `field(...)` resolver via contextual typing. A typo on `parent.someProp`
+// must produce a TS2339 — locking out the `parent: any` regression that
+// the locked positioning explicitly forbids.
+// ---------------------------------------------------------------------------
+
+const _typoGuard = Node.layer(HarnessUser)({
+  fields: (f) => ({
+    id: f(ID, { resolve: (u) => globalId("HarnessUser", u.id) }), // u: HarnessUser
+    badTypo: f(Schema.String, {
+      // @ts-expect-error — TS2339: Property 'NAME_TYPO_SHOULD_ERROR' does not exist on type 'HarnessUser'
+      resolve: (u) => u.NAME_TYPO_SHOULD_ERROR,
+    }),
+  }),
+  load: () => Effect.succeed(null),
+});
+void _typoGuard;
+
+// ---------------------------------------------------------------------------
+// Pipe-resolver acceptance test
+//
+// `Schema.String.pipe(GraphQL.resolve(u => u.name))` must:
+//   - infer u: HarnessUser from the surrounding Node.layer(HarnessUser)({...}) slot
+//   - produce a TS2339 on a typo
+//   - coexist with bare `Schema.String` (pass-through) and `field(...)` (config)
+// ---------------------------------------------------------------------------
+
+const _pipeGuard = Node.layer(HarnessUser)({
+  fields: (_f) => ({
+    name: Schema.String.pipe(resolve((u) => u.id)),  // u: HarnessUser, inferred via pipe
+    bare: Schema.String,                              // pass-through
+    bad: Schema.String.pipe(resolve((u) =>
+      // @ts-expect-error — TS2339: Property 'EMAIL_TYPO' does not exist on type 'HarnessUser'
+      u.EMAIL_TYPO
+    )),
+  }),
+  load: () => Effect.succeed(null),
+});
+void _pipeGuard;
+
+// ---------------------------------------------------------------------------
+// Runtime smoke test — full Todo schema, basic query
+// ---------------------------------------------------------------------------
+
+class TodoStoreT extends Context.Service<TodoStoreT, {
+  list(): Effect.Effect<Array<TodoT>>;
+  findById(id: string): Effect.Effect<TodoT | null>;
+}>()("TodoStoreT") {}
+
+class TodoT extends Schema.Class<TodoT>("TodoT")({
+  id: Schema.String,
+  title: Schema.String,
+  completed: Schema.Boolean,
+}) {}
+
+const TodoStoreLive = Layer.effect(TodoStoreT)(
+  Effect.gen(function* () {
+    const todos = yield* Ref.make<TodoT[]>([
+      new TodoT({ id: "1", title: "Read", completed: false }),
+      new TodoT({ id: "2", title: "Write", completed: true }),
+    ]);
+    return TodoStoreT.of({
+      list: () => Ref.get(todos),
+      findById: (id) =>
+        Ref.get(todos).pipe(Effect.map((rows) => rows.find((t) => t.id === id) ?? null)),
+    });
+  }),
+);
+
+test("smoke: build schema and run a query", async () => {
+  // id: ID! auto-synthesized — no field(ID, ...) needed
+  const TodoNode = Node.layer(TodoT)({
+    fields: (f) => ({
+      title: Schema.String,
+      completed: Schema.Boolean,
+    }),
+    load: (id) =>
+      Effect.gen(function* () {
+        const store = yield* TodoStoreT;
         return yield* store.findById(id);
       }),
   });
-  // Explicit `<T, R2>` for viewer too.
-  const b3 = b2.viewer<{ id: string }, CurrentUser_T29>({
-    type: userRef,
-    resolve: () =>
-      Effect.gen(function* () {
-        const cu = yield* CurrentUser_T29;
-        return { id: cu.id };
-      }),
-  });
-  // Builder R is the union of both buckets.
-  const _checkR: SchemaBuilder<TodoStore_T29 | CurrentUser_T29> = b3;
-  expect(_checkR).toBeDefined();
 
-  // Provide ONLY TodoStore in the runtime — CurrentUser is per-request.
-  const runtime = ManagedRuntime.make(
-    Layer.succeed(TodoStore_T29)({ findById: () => Effect.succeed(null) }),
-  );
-  const schema = b3.toSchema(runtime);
-  // toSchema returns TypedGraphQLSchema<CurrentUser> — exactly the residual.
-  // Compile-time check via assignment to a typed variable.
-  const _typed: import("./types.ts").TypedGraphQLSchema<CurrentUser_T29> = schema;
-  expect(_typed).toBeDefined();
-});
-
-test("toSchema(null) when R = never returns TypedGraphQLSchema<never>", () => {
-  const { builder } = createBuilder().objectType<{ id: string }>("Plain", {
-    fields: () => ({
-      id: { type: scalars.ID, nonNull: true, resolve: (p) => Effect.succeed(p.id) },
+  const QueryLayer = Query.layer({
+    todoCount: queryField(Schema.Number, {
+      resolve: () =>
+        Effect.gen(function* () {
+          const store = yield* TodoStoreT;
+          const rows = yield* store.list();
+          return rows.length;
+        }),
     }),
   });
-  const b2 = builder.queryType({
-    fields: () => ({
-      ping: { type: scalars.String, resolve: () => Effect.succeed("ok") },
-    }),
-  });
-  const schema = b2.toSchema(null);
-  // TypedGraphQLSchema<never> — assignable everywhere.
-  const _typed: import("./types.ts").TypedGraphQLSchema<never> = schema;
-  expect(_typed).toBeDefined();
-});
 
-test("builder.arg(InputRef) unwraps the InputRef into an ArgDef", () => {
-  const b = createBuilder();
-  const { ref: inputRef } = b.input(
-    "FooInput",
-    Schema.Struct({ name: Schema.String }),
-  );
-  const argDef = b.arg(inputRef);
-  expect(argDef.schema).toBe(inputRef.schema);
-  // The wrapper carries the InputRef so schema-bridge can resolve to the
-  // registered named input type (rather than synthesizing an anonymous one).
-  expect(argDef.inputRef).toBe(inputRef);
-});
+  const SchemaLayer = Layer.mergeAll(TodoNode, QueryLayer);
+  const runtime = ManagedRuntime.make(TodoStoreLive);
+  const schema = buildSchema(SchemaLayer, runtime);
 
-test("FieldConfig.args accepts a raw InputRef without the .schema drill", () => {
-  const b0 = createBuilder();
-  const { ref: createInput, builder: b1 } = b0.input(
-    "CreateThingInput",
-    Schema.Struct({ title: Schema.String }),
-  );
-  const { ref: thingRef, builder: b2 } = b1.objectType<{ id: string; title: string }>(
-    "Thing",
-    {
-      fields: () => ({
-        id: { type: scalars.ID, nonNull: true, resolve: (t) => Effect.succeed(t.id) },
-        title: { type: scalars.String, nonNull: true, resolve: (t) => Effect.succeed(t.title) },
-      }),
-    },
-  );
-  const b3 = b2
-    .queryType({
-      fields: () => ({
-        ping: { type: scalars.String, resolve: () => Effect.succeed("ok") },
-      }),
-    })
-    .mutationType({
-      fields: () => ({
-        addThing: {
-          type: thingRef,
-          // Pass the InputRef directly — no `.schema` drill.
-          args: { input: createInput },
-          resolve: (_p, args: { input: { title: string } }) =>
-            Effect.succeed({ id: "1", title: args.input.title }),
-        },
-      }),
-    });
-  // IR records the schema correctly via the normalization pass.
-  const ir = getIR(b3);
-  const mutation = ir.mutationFields?.();
-  expect(mutation?.addThing?.args.input?.schema).toBe(createInput.schema);
+  const sdl = printSchema(schema);
+  expect(sdl).toContain("type TodoT implements Node");
+  expect(sdl).toContain("todoCount: Float");
+  expect(sdl).toMatch(/node\([\s\S]*?id: ID!\s*\): Node/);
 
-  // End-to-end runtime: the schema executes the mutation through the named input.
-  const schema = b3.toSchema(null);
-  return graphql({
-    contextValue: Context.empty(),
+  const result = await execute({
     schema,
-    source: `mutation { addThing(input: { title: "hi" }) { id title } }`,
-  }).then((result) => {
-    expect(result.errors).toBeUndefined();
-    expect(result.data).toEqual({ addThing: { id: "1", title: "hi" } });
+    document: parse("{ todoCount }"),
+    contextValue: Context.empty(),
   });
+  expect(result.errors).toBeUndefined();
+  expect(result.data).toEqual({ todoCount: 2 });
+
+  await runtime.dispose();
 });
 
-test("connection field resolver auto-types args with first/last/after/before", () => {
-  const { ref: nodeRef, builder: b1 } = createBuilder().node<{ id: string }>("Doc", {
-    fields: () => ({
-      id: { type: scalars.ID, nonNull: true, resolve: (d) => Effect.succeed(d.id) },
+test("smoke: node(id) returns the loaded entity", async () => {
+  const TodoNode = Node.layer(TodoT)({
+    fields: (f) => ({
+      title: Schema.String,
     }),
-    loadOne: () => Effect.succeed(null),
+    load: (id) =>
+      Effect.gen(function* () {
+        const store = yield* TodoStoreT;
+        return yield* store.findById(id);
+      }),
   });
-  const { ref: connRef, builder: b2 } = b1.connection(nodeRef);
-  // No explicit `args` annotation — the resolver's `args` is auto-typed
-  // because `type` is a ConnectionRef.
-  const b3 = b2.queryType({
-    fields: () => ({
-      docs: {
-        type: connRef,
-        nonNull: true,
-        resolve: (_p, args) => {
-          // Type-level: TS knows args has first/last/after/before (all optional).
-          const _first: number | undefined = args.first;
-          const _last: number | undefined = args.last;
-          const _after: string | undefined = args.after;
-          const _before: string | undefined = args.before;
-          void _first;
-          void _last;
-          void _after;
-          void _before;
-          return Effect.succeed({
-            edges: [],
-            pageInfo: {
-              hasNextPage: false,
-              hasPreviousPage: false,
-              startCursor: null,
-              endCursor: null,
-            },
+
+  const QueryLayer = Query.layer({
+    healthcheck: queryField(Schema.Boolean, {
+      resolve: () => Effect.succeed(true),
+    }),
+  });
+
+  const SchemaLayer = Layer.mergeAll(TodoNode, QueryLayer);
+  const runtime = ManagedRuntime.make(TodoStoreLive);
+  const schema = buildSchema(SchemaLayer, runtime);
+
+  const gid = globalId("TodoT", "1");
+  const result = await execute({
+    schema,
+    document: parse(`{ node(id: "${gid}") { ... on TodoT { id title } } }`),
+    contextValue: Context.empty(),
+  });
+  expect(result.errors).toBeUndefined();
+  expect(result.data).toEqual({ node: { id: gid, title: "Read" } });
+
+  await runtime.dispose();
+});
+
+test("smoke: Connection auto-registers; no Connection.layer() call needed", async () => {
+  // Connection.layer() is NOT called — queryField(Connection(TodoT), ...) auto-registers
+  // the TodoTConnection and TodoTEdge types as a side effect of being referenced.
+  // id: ID! is also NOT declared — Node.layer auto-synthesizes it from TodoT.id.
+  const TodoNode = Node.layer(TodoT)({
+    fields: (f) => ({
+      title: Schema.String,
+    }),
+    load: (id) =>
+      Effect.gen(function* () {
+        const store = yield* TodoStoreT;
+        return yield* store.findById(id);
+      }),
+  });
+
+  const QueryLayer = Query.layer({
+    todos: queryField(Connection(TodoT), {
+      resolve: (_root, args) =>
+        Effect.gen(function* () {
+          const store = yield* TodoStoreT;
+          const all = yield* store.list();
+          const limit = args.first ?? all.length;
+          return toConnection(all.slice(0, limit), {
+            cursor: (t) => t.id,
+            hasNextPage: limit < all.length,
           });
-        },
-      },
+        }),
     }),
   });
-  // Compile reaching here is the test; runtime sanity-check the lowered schema.
-  const schema = b3.toSchema(null);
-  expect(schema.getQueryType()?.getFields().docs).toBeDefined();
+
+  const SchemaLayer = Layer.mergeAll(TodoNode, QueryLayer);
+  const runtime = ManagedRuntime.make(TodoStoreLive);
+  const schema = buildSchema(SchemaLayer, runtime);
+
+  const sdl = printSchema(schema);
+  expect(sdl).toContain("type TodoTConnection");
+  expect(sdl).toContain("type TodoTEdge");
+  expect(sdl).toMatch(/todos\(.*first: Int.*\): TodoTConnection/s);
+
+  const result = await execute({
+    schema,
+    document: parse(`{ todos(first: 1) { edges { node { title } cursor } pageInfo { hasNextPage } } }`),
+    contextValue: Context.empty(),
+  });
+  expect(result.errors).toBeUndefined();
+  expect((result.data as any).todos.edges).toHaveLength(1);
+  expect((result.data as any).todos.edges[0].node.title).toBe("Read");
+  expect((result.data as any).todos.pageInfo.hasNextPage).toBe(true);
+
+  await runtime.dispose();
 });
 
-test("node R2 generic accumulates loadOne + field-resolver service requirements", () => {
-  // Caller supplies `<T, R2>` explicitly — `R2` is the union of every service
-  // any resolver or `loadOne` yields for this node.
-  type DocT = { id: string; title: string };
-  const { ref: docRef, builder: b1 } = createBuilder().node<
-    DocT,
-    Database | UserSession
-  >("Doc", {
-    fields: () => ({
-      id: { type: scalars.ID, nonNull: true, resolve: (d) => Effect.succeed(d.id) },
-      title: {
-        type: scalars.String,
-        nonNull: true,
-        resolve: (d) =>
-          Effect.gen(function* () {
-            const session = yield* UserSession;
-            return `${session.userId}: ${d.title}`;
-          }),
-      },
+test("smoke: mutation with input + deletedId helper", async () => {
+  class CreateTodoInput extends Schema.Class<CreateTodoInput>("CreateTodoInput")({
+    title: Schema.String,
+  }) {}
+
+  const TodoNode = Node.layer(TodoT)({
+    fields: (f) => ({
+      title: Schema.String,
     }),
-    loadOne: (id) =>
+    load: (id) =>
       Effect.gen(function* () {
-        const _db = yield* Database;
-        return { id, title: "hi" };
+        const store = yield* TodoStoreT;
+        return yield* store.findById(id);
       }),
   });
-  // Builder R is the explicit `R2` after this single registration.
-  const _r: SchemaBuilder<Database | UserSession> = b1;
-  expect(_r).toBeDefined();
-  expect(docRef.name).toBe("Doc");
+
+  const QueryLayer = Query.layer({
+    healthcheck: queryField(Schema.Boolean, { resolve: () => Effect.succeed(true) }),
+  });
+
+  const MutationLayer = Mutation.layer({
+    createTodo: mutationField({
+      input: CreateTodoInput,
+      output: TodoT,
+      resolve: (_root, args) =>
+        Effect.succeed(new TodoT({ id: "99", title: args.input.title, completed: false })),
+    }),
+    deleteTodo: mutationField({
+      args: { id: Schema.String },
+      output: ID,
+      resolve: (_root, args) => {
+        const { typename, id } = parseGlobalId(args.id);
+        return Effect.succeed(deletedId(typename, id));
+      },
+    }),
+  });
+
+  const SchemaLayer = Layer.mergeAll(TodoNode, QueryLayer, MutationLayer);
+  const schema = buildSchema(SchemaLayer, null);
+
+  const sdl = printSchema(schema);
+  expect(sdl).toContain("type Mutation");
+  expect(sdl).toContain("input CreateTodoInput");
+  expect(sdl).toContain("createTodo(input: CreateTodoInput): TodoT");
+
+  const result = await execute({
+    schema,
+    document: parse(`mutation { createTodo(input: { title: "new" }) { id title } }`),
+    contextValue: Context.empty(),
+  });
+  expect(result.errors).toBeUndefined();
+  expect((result.data as any).createTodo.title).toBe("new");
 });
 
-test("queryType / mutationType / viewer compose R via the explicit <R2> generic", () => {
-  const { ref: meRef, builder: b1 } = createBuilder().objectType<
-    { id: string },
-    never
-  >("Me", {
-    fields: () => ({
-      id: { type: scalars.ID, nonNull: true, resolve: (m) => Effect.succeed(m.id) },
+test("smoke: custom scalar via GraphQL.Scalar", async () => {
+  const DateScalar = Scalar("HarnessDate", Schema.DateFromString);
+
+  class Event extends Schema.Class<Event>("Event")({
+    id: Schema.String,
+    at: Schema.DateFromString,
+  }) {}
+
+  const EventNode = Node.layer(Event)({
+    fields: (f) => ({
+      at: f(DateScalar),
+    }),
+    load: () => Effect.succeed(null),
+  });
+
+  const QueryLayer = Query.layer({
+    now: queryField(DateScalar, {
+      resolve: () => Effect.succeed(new Date("2026-01-01T00:00:00.000Z")),
     }),
   });
-  const b2 = b1.viewer<{ id: string }, UserSession>({
-    type: meRef,
-    resolve: () =>
+
+  const SchemaLayer = Layer.mergeAll(EventNode, QueryLayer);
+  const schema = buildSchema(SchemaLayer, null);
+
+  const sdl = printSchema(schema);
+  expect(sdl).toContain("scalar HarnessDate");
+  expect(sdl).toMatch(/now: HarnessDate/);
+});
+
+test("smoke: viewer field is registered when a Node.layer supplies one", async () => {
+  class Me extends Schema.Class<Me>("Me")({ id: Schema.String }) {}
+
+  const MeNode = Node.layer(Me)({
+    load: (id) => Effect.succeed(new Me({ id })),
+    viewer: () => Effect.succeed(new Me({ id: "viewer-1" })),
+  });
+
+  // Even with no Query.layer, viewer alone makes the schema valid.
+  const SchemaLayer = Layer.mergeAll(MeNode);
+  const schema = buildSchema(SchemaLayer, null);
+
+  const sdl = printSchema(schema);
+  expect(sdl).toContain("viewer: Me");
+
+  const result = await execute({
+    schema,
+    document: parse(`{ viewer { id } }`),
+    contextValue: Context.empty(),
+  });
+  expect(result.errors).toBeUndefined();
+  expect((result.data as any).viewer.id).toBe(globalId("Me", "viewer-1"));
+});
+
+test("smoke: pipe-resolver shorthand executes at runtime", async () => {
+  class Person extends Schema.Class<Person>("Person")({
+    firstName: Schema.String,
+    lastName: Schema.String,
+  }) {}
+
+  const PersonNode = Node.layer(Person)({
+    fields: (f) => ({
+      // pipe form: parent type flows from Node.layer(Person)
+      fullName: Schema.String.pipe(resolve((p) => `${p.firstName} ${p.lastName}`)),
+      // bare passthrough
+      firstName: Schema.String,
+    }),
+    load: (_id) => Effect.succeed(new Person({ firstName: "Ada", lastName: "Lovelace" })),
+  });
+
+  const QueryLayer = Query.layer({
+    person: queryField(Person, {
+      resolve: () => Effect.succeed(new Person({ firstName: "Ada", lastName: "Lovelace" })),
+    }),
+  });
+
+  const SchemaLayer = Layer.mergeAll(PersonNode, QueryLayer);
+  const schema = buildSchema(SchemaLayer, null);
+
+  const result = await execute({
+    schema,
+    document: parse(`{ person { firstName fullName } }`),
+    contextValue: Context.empty(),
+  });
+  expect(result.errors).toBeUndefined();
+  expect((result.data as any).person.firstName).toBe("Ada");
+  expect((result.data as any).person.fullName).toBe("Ada Lovelace");
+});
+
+test("smoke: missing-fragment error message names the type and the fix", () => {
+  // A Connection type referenced by a query field must be registered. If the
+  // user forgets it, they should see an actionable message naming the field,
+  // the type, and what to add — not "type X is not registered."
+  class Item extends Schema.Class<Item>("Item")({ id: Schema.String }) {}
+
+  const ItemNode = Node.layer(Item)({
+    fields: (f) => ({ id: f(ID, { resolve: (i) => globalId("Item", i.id) }) }),
+    load: () => Effect.succeed(null),
+  });
+
+  // Reference an unregistered Connection. We deliberately bypass the auto-
+  // registration that `Connection(Item)` would do — by using a stale name.
+  // Easier: register Item but not its connection, then add a queryField that
+  // names a "FooConnection" via a manual Schema.Class trick. Cleanest test:
+  // make a node that references an unregistered named type via a pass-through.
+  class Ghost extends Schema.Class<Ghost>("Ghost")({ id: Schema.String }) {}
+  // Don't register Ghost. Reference it from a field type in Item to trigger
+  // the missing-type error.
+  const BadNode = Node.layer(Item)({
+    fields: (f) => ({
+      id: f(ID, { resolve: (i) => globalId("Item", i.id) }),
+      ghost: f(Ghost, { resolve: () => null }),
+    }),
+    load: () => Effect.succeed(null),
+  });
+  void ItemNode;
+  const SchemaLayer = Layer.mergeAll(BadNode);
+  expect(() => buildSchema(SchemaLayer, null)).toThrow(/Add the layer that defines Ghost/);
+});
+
+test("smoke: full integration — viewer + connection + mutation with per-request CurrentUser", async () => {
+  class CurrentUserSvc extends Context.Service<CurrentUserSvc, { readonly id: string }>()(
+    "CurrentUserSvcV2",
+  ) {}
+
+  class TodoStoreV2 extends Context.Service<TodoStoreV2, {
+    findById(id: string): Effect.Effect<TodoT | null>;
+    list(args: { ownerId: string }): Effect.Effect<TodoT[]>;
+    create(args: { title: string; ownerId: string }): Effect.Effect<TodoT>;
+  }>()("TodoStoreV2") {}
+
+  const TodoStoreV2Live = Layer.effect(TodoStoreV2)(
+    Effect.gen(function* () {
+      const todos = yield* Ref.make<TodoT[]>([
+        new TodoT({ id: "1", title: "first", completed: false }),
+      ]);
+      let nextId = 2;
+      return TodoStoreV2.of({
+        findById: (id) =>
+          Ref.get(todos).pipe(Effect.map((rows) => rows.find((t) => t.id === id) ?? null)),
+        list: () => Ref.get(todos),
+        create: ({ title }) =>
+          Effect.gen(function* () {
+            const t = new TodoT({ id: String(nextId++), title, completed: false });
+            yield* Ref.update(todos, (rs) => [...rs, t]);
+            return t;
+          }),
+      });
+    }),
+  );
+
+  class Viewer extends Schema.Class<Viewer>("Viewer")({ id: Schema.String }) {}
+
+  // id: ID! auto-synthesized from Viewer.id; no field(ID, ...) needed
+  const ViewerNode = Node.layer(Viewer)({
+    load: (id) => Effect.succeed(new Viewer({ id })),
+    viewer: () =>
       Effect.gen(function* () {
-        const s = yield* UserSession;
-        return { id: s.userId };
+        const cu = yield* CurrentUserSvc;
+        return new Viewer({ id: cu.id });
       }),
   });
-  const b3 = b2.queryType<Database>({
-    fields: () => ({
-      ping: {
-        type: scalars.String,
-        resolve: () =>
-          Effect.gen(function* () {
-            const _db = yield* Database;
-            return "ok";
-          }),
-      },
+
+  // id: ID! auto-synthesized; Connection.layer(TodoT) not needed — auto-registered
+  const TodoNode = Node.layer(TodoT)({
+    fields: (f) => ({
+      title: Schema.String,
+      completed: Schema.Boolean,
+    }),
+    load: (id) =>
+      Effect.gen(function* () {
+        const store = yield* TodoStoreV2;
+        return yield* store.findById(id);
+      }),
+  });
+
+  const QueryLayer = Query.layer({
+    todos: queryField(Connection(TodoT), {
+      resolve: (_root, args) =>
+        Effect.gen(function* () {
+          const store = yield* TodoStoreV2;
+          const cu = yield* CurrentUserSvc;
+          const all = yield* store.list({ ownerId: cu.id });
+          const limit = args.first ?? all.length;
+          return toConnection(all.slice(0, limit), {
+            cursor: (t) => t.id,
+            hasNextPage: limit < all.length,
+          });
+        }),
     }),
   });
-  const b4 = b3.mutationType({
-    fields: () => ({
-      noop: {
-        type: scalars.String,
-        resolve: () => Effect.succeed("ok"),
-      },
+
+  class CreateTodoInput extends Schema.Class<CreateTodoInput>("CreateTodoInputV2")({
+    title: Schema.String,
+  }) {}
+
+  const MutationLayer = Mutation.layer({
+    createTodo: mutationField({
+      input: CreateTodoInput,
+      output: TodoT,
+      resolve: (_root, args) =>
+        Effect.gen(function* () {
+          const store = yield* TodoStoreV2;
+          const cu = yield* CurrentUserSvc;
+          return yield* store.create({ title: args.input.title, ownerId: cu.id });
+        }),
     }),
   });
-  // R = UserSession (viewer) | Database (queryType). The mutation resolver is
-  // pure, so its `<R2>` defaults to `never`.
-  const _r: SchemaBuilder<UserSession | Database> = b4;
-  expect(_r).toBeDefined();
+
+  const SchemaLayer = Layer.mergeAll(ViewerNode, TodoNode, QueryLayer, MutationLayer);
+
+  // Type assertion: union of services from all layers
+  type _Services = Layer.Services<typeof SchemaLayer>;
+  type _Assert = AssertExact<_Services, CurrentUserSvc | TodoStoreV2>;
+  const _a: _Assert = true;
+  void _a;
+
+  const runtime = ManagedRuntime.make(TodoStoreV2Live);
+  const schema = buildSchema(SchemaLayer, runtime);
+
+  // Provide CurrentUserSvc per-request via Context for execute()
+  const ctx = Context.empty().pipe(
+    (c) => Context.add(c, CurrentUserSvc, { id: "alice" } as any),
+  );
+
+  const r1 = await execute({
+    schema,
+    document: parse(`{ viewer { id } }`),
+    contextValue: ctx,
+  });
+  expect(r1.errors).toBeUndefined();
+  expect((r1.data as any).viewer.id).toBe(globalId("Viewer", "alice"));
+
+  const r2 = await execute({
+    schema,
+    document: parse(`mutation { createTodo(input: { title: "second" }) { id title } }`),
+    contextValue: ctx,
+  });
+  expect(r2.errors).toBeUndefined();
+  expect((r2.data as any).createTodo.title).toBe("second");
+
+  await runtime.dispose();
 });
+
+// Avoid "no test" unused-imports
+void Subscription;
+void subscriptionField;
+void GraphQL;

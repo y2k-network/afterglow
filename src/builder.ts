@@ -1,448 +1,949 @@
-import type { ManagedRuntime, Schema } from "effect";
+/**
+ * Public `GraphQL` namespace constructors for the v2 Layer-driven API.
+ *
+ * Each `*.layer(...)` returns a `Layer<never, never, R>`:
+ *   - `ROut = never` because `Layer.mergeAll` constrains every input to
+ *     `Layer<never, any, any>` (`Layer.d.ts:1111`).
+ *   - `R` is the union of resolver service requirements, inferred from the
+ *     Effect.gen bodies passed in `load` / `viewer` / `resolve` / `stream`.
+ *   - The IR fragment for each layer is captured in the module-internal
+ *     registry side-channel (`./registry.ts`); when `toHttpApp` runs the
+ *     SchemaLayer's build, the side effects fire and contribute their
+ *     fragments to the active build.
+ *
+ * The public Layer type carries no `IRRegistry` requirement — the registry
+ * side-channel is invisible at the type level. The cast is the one place
+ * the v2 implementation hides framework-internal mechanism behind a
+ * user-facing type guarantee. Userland never sees this; their `R` is exactly
+ * what their resolvers yield.
+ */
 import {
-  emptyIR,
-  type IR,
-  type IRArgDef,
-  type IRConnectionType,
-  type IRFieldDef,
-  type IRInputType,
-  type IRNodeType,
-  type IRObjectType,
-  type IRScalarType,
-  type IRSubscriptionFieldDef,
+  Effect,
+  Layer,
+  Schema,
+  Stream,
+  type Context,
+} from "effect";
+import { decodeGlobalId, encodeGlobalId } from "./relay.ts";
+import {
+  connectionEdge as connectionEdgeFn,
+  deletedId as deletedIdFn,
+} from "./mutation-shapes.ts";
+import type {
+  IRConnectionFragment,
+  IRFieldDef,
+  IRMutationFragment,
+  IRNodeFragment,
+  IROutputType,
+  IRQueryFragment,
+  IRScalarFragment,
+  IRSubscriptionFieldDef,
+  IRSubscriptionFragment,
 } from "./ir.ts";
-import { lower } from "./lower.ts";
+import { recordFragment } from "./registry.ts";
 import type {
   ArgDef,
-  ArgValue,
-  ConnectionRef,
-  InputRef,
-  ListOutputRef,
-  NamedOutputRef,
-  NodeConfig,
-  NodeRef,
-  ObjectRef,
-  ObjectTypeConfig,
-  OutputTypeRef,
-  RootTypeConfig,
-  ScalarConfig,
-  ScalarOutputRef,
-  ScalarRef,
-  SubscriptionRootTypeConfig,
-  TypedGraphQLSchema,
-  ViewerConfig,
+  ArgDefs,
+  ArgsShape,
+  ConnectionPayload,
+  ConnectionType,
+  FieldDef,
+  FieldOptions,
+  FieldOutputType,
+  IDMarker,
+  MutationFieldDef,
+  PaginationArgs,
+  QueryFieldDef,
+  ScalarType,
+  SchemaClass,
+  SubscriptionFieldDef,
 } from "./types.ts";
 
-/**
- * Immutable, threaded SchemaBuilder. Each registration returns a new builder
- * with a (possibly) widened resolver-service requirement `R`. `R` accumulates
- * exactly like `Effect.flatMap`: the union of every service any resolver
- * yields, server-scoped *and* per-request alike.
- *
- * Two-tier provisioning at compile time:
- *  - `toSchema(runtime)` accepts a `ManagedRuntime<RA, never>` where `RA` is
- *    any *subset* of `R`. The returned `TypedGraphQLSchema<Exclude<R, RA>>`
- *    carries the leftover `ReqR` as a phantom.
- *  - `toHttpApp(schema, { requestContext })` accepts a `Layer` that provides
- *    exactly that residual `ReqR`. TypeScript enforces that the union of
- *    runtime services + per-request services covers every service `R`
- *    requires — no casts needed.
- *
- * Builder methods take an explicit `<T, R2>` (or `<R2>`) generic pair: `T` is
- * the parent type carried on the returned ref; `R2` is the resolver service
- * requirement contributed by this registration. Users spell `R2` out — e.g.
- * `b.node<Todo, TodoStore>(...)` — at the call site. Full inference of `R2`
- * from the `fields` thunk is deferred to a future tier (see T30).
- */
-export interface SchemaBuilder<R = never> {
-  readonly _R: (r: R) => R;
+// ---------------------------------------------------------------------------
+// ID — the singleton sentinel for `id: ID!` fields.
+// ---------------------------------------------------------------------------
 
-  /** Register a plain object type. Caller supplies `<T, R2>` explicitly. */
-  objectType<T, R2 = never>(
-    name: string,
-    config: ObjectTypeConfig<T, R2>,
-  ): { ref: ObjectRef<T>; builder: SchemaBuilder<R | R2> };
+const ID_TAG = Symbol("v2/id");
+export const ID: IDMarker = Object.freeze({ [ID_TAG]: "ID" }) as unknown as IDMarker;
 
-  /** Register a Relay `Node` type with a `loadOne(id)` loader. */
-  node<T, R2 = never>(
-    name: string,
-    config: NodeConfig<T, R2>,
-  ): { ref: NodeRef<T>; builder: SchemaBuilder<R | R2> };
+const EFFECT_TYPE_ID = "~effect/Effect";
 
-  /** Register the Query root. */
-  queryType<R2 = never>(config: RootTypeConfig<R2>): SchemaBuilder<R | R2>;
+const isEffect = (v: unknown): boolean => {
+  return (
+    v !== null &&
+    typeof v === "object" &&
+    EFFECT_TYPE_ID in (v as object)
+  );
+};
 
-  /** Register the Mutation root. */
-  mutationType<R2 = never>(config: RootTypeConfig<R2>): SchemaBuilder<R | R2>;
+// ---------------------------------------------------------------------------
+// Custom scalar
+// ---------------------------------------------------------------------------
 
-  /**
-   * Register the Subscription root type. Field resolvers express results as
-   * `Stream<A, E, R>`; the WebSocket transport (`toWebSocketApp`) pumps each
-   * yielded value as a `next` message and sends `complete` when the stream
-   * ends.
-   */
-  subscriptionType<R2 = never>(
-    config: SubscriptionRootTypeConfig<R2>,
-  ): SchemaBuilder<R | R2>;
-
-  /**
-   * Register the canonical Relay `viewer: <T>` query field. The field name is
-   * fixed at `viewer` per Relay convention; the type ref (User / Viewer / Me)
-   * is the user's choice. Composes with `queryType(...)` — both sets of fields
-   * are merged into the same Query type at lower-time, with `viewer(...)`
-   * winning if the user also defines a field named `viewer` via `queryType`.
-   */
-  viewer<T, R2 = never>(config: ViewerConfig<T, R2>): SchemaBuilder<R | R2>;
-
-  connection<T>(
-    nodeRef: NodeRef<T> | ObjectRef<T>,
-  ): { ref: ConnectionRef<T>; builder: SchemaBuilder<R> };
-
-  input<S extends Schema.Top>(
-    name: string,
-    schema: S,
-  ): { ref: InputRef<S>; builder: SchemaBuilder<R> };
-
-  scalar<T>(
-    name: string,
-    config: ScalarConfig<T>,
-  ): { ref: ScalarRef<T>; builder: SchemaBuilder<R> };
-
-  /** Inline-arg sugar. Two overloads:
-   *
-   *  - `arg(Schema.Number)` — wrap a raw schema as `ArgDef<S>`.
-   *  - `arg(createTodoInputRef)` — unwrap a registered input ref as
-   *    `ArgDef<S>` carrying the named-input identifier so schema-bridge picks
-   *    up the registered `GraphQLInputObjectType` instead of synthesizing a
-   *    fresh anonymous one.
-   *
-   *  Does not touch the IR. */
-  arg<S extends Schema.Top>(schema: S): ArgDef<S>;
-  arg<S extends Schema.Top>(inputRef: InputRef<S>): ArgDef<S>;
-
-  /**
-   * Compile the IR to a `TypedGraphQLSchema<ReqR>`.
-   *
-   * `RA` is the subset of `R` that the supplied `ManagedRuntime` provides.
-   * The residual `Exclude<R, RA>` is the per-request `ReqR` carried as a
-   * phantom on the returned schema; `toHttpApp` requires a request-context
-   * Layer that produces exactly those services. When `R = never`, pass
-   * `null` to skip the runtime entirely (resolvers run via `Effect.runPromise`).
-   *
-   * @example
-   * // Server-scoped TodoStore + per-request CurrentUser:
-   * const schema = builder.toSchema(runtime) // runtime: ManagedRuntime<TodoStore, never>
-   * // schema: TypedGraphQLSchema<CurrentUser>
-   * toHttpApp(schema, { requestContext: RequestLayer }) // Layer<CurrentUser, ...>
-   */
-  toSchema<RA extends R = R>(
-    runtime: ManagedRuntime.ManagedRuntime<RA, never> | null,
-  ): TypedGraphQLSchema<Exclude<R, RA>>;
+export function Scalar<T>(
+  name: string,
+  schema: Schema.Codec<T, string | number | boolean, never, never>,
+  description?: string,
+): ScalarType<T> {
+  // We don't register at construction time — that would bind the scalar to
+  // whatever build was active when the module loaded. Instead, the returned
+  // value carries its IR fragment under a private key; `outputTypeToIR`
+  // registers it on demand the first time the scalar is referenced from a
+  // field type during the active build.
+  const frag: IRScalarFragment = { kind: "scalar", name, schema: schema as IRScalarFragment["schema"], description };
+  const out = { name, schema } as unknown as Record<string, unknown>;
+  Object.defineProperty(out, SCALAR_FRAG_KEY, { value: frag, enumerable: false });
+  return out as unknown as ScalarType<T>;
 }
 
+const SCALAR_FRAG_KEY = Symbol("v2/scalar-frag");
+
+// ---------------------------------------------------------------------------
+// Resolver annotation — `Schema.String.pipe(GraphQL.resolve(u => u.name))`
+//
+// The pipe form attaches a resolver function to a schema as a Symbol-keyed
+// own property. `compileFieldEntry` checks for this on every Schema.Top it
+// sees — when present, the function becomes the field's resolver; when
+// absent, the schema is a default property-name pass-through.
+//
+// Inference: TypeScript flows the parent type `T` from the surrounding
+// `Node.layer(User)({ fields: {...} })` into the resolver's `parent: T`
+// argument via contextual typing on the slot's mapped type. The trick that
+// makes this work through `.pipe()` (which normally blocks contextual
+// typing) is the indexed-signature shape on `NodeFields<T>` below — a
+// `Record<...>` would NOT propagate the type. Don't switch back to `Record`.
+// ---------------------------------------------------------------------------
+
+const RESOLVER_FN_KEY = Symbol("v2/resolver-fn");
+
 /**
- * Normalize a public `Record<string, ArgValue>` (which may contain raw
- * `InputRef`s for the `args: { input: createTodoInputRef }` shorthand) into
- * the IR's `Record<string, IRArgDef>` shape. `InputRef`s are unwrapped to
- * `{ schema: ref.schema }`; `ArgDef`s pass through with their `description`.
- *
- * The schema's `identifier` annotation (set by `builder.input(...)`) is what
- * schema-bridge uses to resolve to the registered named input — there is no
- * need to thread the input ref's name through the IR separately.
+ * A schema with a resolver function attached as a Symbol-keyed annotation.
+ * The phantom `[RESOLVER_PARENT]` carries the parent type so contextual
+ * typing on `Node.layer(T)({...})` can flow `T` into the resolver's
+ * `parent` parameter — invariant in `TParent` to keep cross-type usage
+ * safe (a `WithResolver<User, _>` won't accidentally fit in a slot expecting
+ * `WithResolver<Other, _>`).
  */
-const normalizeArgs = (
-  args: Record<string, ArgValue> | undefined,
-): Record<string, IRArgDef> => {
-  if (args === undefined) return {};
-  const out: Record<string, IRArgDef> = {};
-  for (const [key, value] of Object.entries(args)) {
-    if ((value as { _tag?: string })._tag === "InputRef") {
-      const ref = value as InputRef<Schema.Top>;
-      out[key] = { schema: ref.schema };
-    } else {
-      const def = value as ArgDef<Schema.Top>;
-      out[key] = def.description !== undefined
-        ? { schema: def.schema, description: def.description }
-        : { schema: def.schema };
+declare const RESOLVER_PARENT: unique symbol;
+type WithResolver<TParent, S extends Schema.Top> = S & {
+  readonly [RESOLVER_PARENT]?: { _i: (p: TParent) => void; _o: () => TParent };
+};
+
+/**
+ * Pipe-compatible resolver attachment.
+ *
+ * @example
+ * ```ts
+ * Node.layer(User)({
+ *   fields: {
+ *     name: Schema.String.pipe(GraphQL.resolve((u) => u.name)),  // u: User
+ *     bio: Schema.String,                                         // pass-through
+ *   },
+ *   load: ...,
+ * })
+ * ```
+ *
+ * The function `fn` runs in the resolver pipeline like any other resolver —
+ * it can return a plain value or an `Effect`. The returned schema is the
+ * same schema as the input, with a private resolver annotation attached;
+ * downstream consumers that don't know about the annotation see a normal
+ * `Schema.Top`.
+ */
+export function resolve<TParent, S extends Schema.Top>(
+  fn: (parent: TParent) => S["Type"] | Effect.Effect<S["Type"], any, any>,
+): (self: S) => WithResolver<TParent, S> {
+  return (self) => {
+    // Clone-with-annotation: we don't want to mutate the user's schema. The
+    // simplest approach is `schema.annotate({})` which always returns a fresh
+    // Rebuild — then we attach our private symbol on the copy.
+    const annotated = self.annotate({}) as Schema.Top;
+    Object.defineProperty(annotated, RESOLVER_FN_KEY, {
+      value: fn,
+      enumerable: false,
+      configurable: false,
+    });
+    return annotated as WithResolver<TParent, S>;
+  };
+}
+
+const readResolverFn = (
+  v: unknown,
+): ((parent: any) => unknown) | undefined => {
+  if (typeof v !== "object" || v === null) return undefined;
+  const fn = (v as Record<symbol, unknown>)[RESOLVER_FN_KEY];
+  return typeof fn === "function" ? (fn as (p: any) => unknown) : undefined;
+};
+
+// ---------------------------------------------------------------------------
+// Field — used inside Node/Object `fields:` blocks
+// ---------------------------------------------------------------------------
+
+export function field<TParent, T, R = never, A extends ArgDefs | undefined = undefined>(
+  type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top,
+  options?: FieldOptions<TParent, T, A extends ArgDefs ? ArgsShape<A> : {}, R> & { args?: A },
+): FieldDef<TParent, R> {
+  // GraphQL IDs are non-null by convention (Relay's Node interface requires
+  // `id: ID!`), so we default `field(ID, ...)` to nonNull unless the user
+  // explicitly opts out. Every other type defaults to wire-nullable (the
+  // framework's "default-nullable for resilience" stance, see DESIGN.md §6).
+  const isID = type === ID;
+  const nonNull = options?.nonNull ?? (isID ? true : false);
+  const raw = {
+    type: type as FieldOutputType,
+    nonNull,
+    semanticNonNull: options?.semanticNonNull,
+    description: options?.description,
+    args: (options?.args ?? {}) as ArgDefs,
+    resolve: options?.resolve,
+  };
+  // FieldDef is an opaque branded type; we attach the raw payload through a
+  // private property so `Node.layer` can read it without exposing internals.
+  const fd = Object.create(null) as object;
+  Object.defineProperty(fd, RAW_FIELD_KEY, { value: raw, enumerable: false });
+  return fd as FieldDef<TParent, R>;
+}
+
+const RAW_FIELD_KEY = Symbol("v2/raw-field");
+
+const readRawField = (
+  fd: unknown,
+): {
+  type: FieldOutputType;
+  nonNull: boolean;
+  semanticNonNull?: boolean;
+  description?: string;
+  args: ArgDefs;
+  resolve?: (parent: any, args: any, info: any) => unknown;
+} | null => {
+  if (typeof fd !== "object" || fd === null) return null;
+  const raw = (fd as Record<symbol, unknown>)[RAW_FIELD_KEY];
+  return (raw as ReturnType<typeof readRawField>) ?? null;
+};
+
+// ---------------------------------------------------------------------------
+// Output-type compilation: FieldOutputType → IROutputType
+// ---------------------------------------------------------------------------
+
+const outputTypeToIR = (t: FieldOutputType | ConnectionType<unknown>): IROutputType => {
+  // ID marker
+  if (t === ID) return { kind: "scalar", name: "ID" };
+  // ConnectionType (carries its node ctor name)
+  if (typeof t === "object" && t !== null && CONNECTION_NODE_KEY in (t as object)) {
+    const nodeName = (t as unknown as Record<symbol, unknown>)[CONNECTION_NODE_KEY] as string;
+    // Auto-register the connection IR fragment so users don't need Connection.layer().
+    const connFrag: IRConnectionFragment = {
+      kind: "connection",
+      name: `${nodeName}Connection`,
+      edgeName: `${nodeName}Edge`,
+      nodeTypeName: nodeName,
+    };
+    recordFragment(connFrag);
+    return { kind: "named", name: `${nodeName}Connection` };
+  }
+  // Scalar def from Scalar(...) — register on demand
+  if (typeof t === "object" && t !== null && "name" in (t as object) && "schema" in (t as object)) {
+    const frag = (t as unknown as Record<symbol, unknown>)[SCALAR_FRAG_KEY] as
+      | IRScalarFragment
+      | undefined;
+    if (frag !== undefined) recordFragment(frag);
+    return { kind: "scalar", name: (t as { name: string }).name };
+  }
+  // Schema.Class (constructor)
+  if (typeof t === "function") {
+    const name = (t as { identifier?: unknown }).identifier;
+    if (typeof name !== "string") {
+      throw new Error(
+        "effect-graphql: cannot derive a GraphQL type name from this constructor — expected a Schema.Class.",
+      );
+    }
+    return { kind: "named", name };
+  }
+  // Schema.Top primitives — map common ones to GraphQL builtins
+  if (typeof t === "object" && t !== null && "ast" in (t as object)) {
+    const ast = (t as Schema.Top).ast;
+    switch (ast._tag) {
+      case "String":
+        return { kind: "scalar", name: "String" };
+      case "Number":
+        return { kind: "scalar", name: "Float" };
+      case "Boolean":
+        return { kind: "scalar", name: "Boolean" };
+      default: {
+        // Try to use the schema's identifier annotation (e.g. DateFromString
+        // standard scalars get `Date`/`DateTime` identifiers from us).
+        const id = ast.annotations?.identifier;
+        if (typeof id === "string") {
+          // Standard scalars' identifiers match registered scalar names
+          // (DateTime, JSON, URL, etc. — see standard-scalars.ts).
+          return { kind: "scalar", name: id };
+        }
+        throw new Error(
+          `effect-graphql: cannot map Schema AST "${ast._tag}" to a GraphQL output type without an \`identifier\` annotation.`,
+        );
+      }
+    }
+  }
+  throw new Error("effect-graphql: unsupported field output type");
+};
+
+// ---------------------------------------------------------------------------
+// Schema.Class identifier extraction (re-used for Node.layer / Connection.layer)
+// ---------------------------------------------------------------------------
+
+const classToInputSchema = (cls: unknown): Schema.Top => {
+  const c = cls as { fields?: Record<string, Schema.Top>; identifier?: unknown };
+  if (c.fields !== undefined && typeof c.identifier === "string") {
+    const struct = Schema.Struct(c.fields);
+    return struct.annotate({ identifier: c.identifier });
+  }
+  // Fallback — already a Schema.Top of some shape (e.g. a plain Struct).
+  if ((cls as { ast?: unknown }).ast !== undefined) return cls as Schema.Top;
+  throw new Error(
+    "effect-graphql: mutationField input must be a Schema.Class or a named Schema.Struct.",
+  );
+};
+
+const classIdentifier = (cls: SchemaClass<unknown>): string => {
+  const name = (cls as { identifier?: unknown }).identifier;
+  if (typeof name !== "string") {
+    throw new Error(
+      "effect-graphql: GraphQL.Node.layer / Connection.layer require a Schema.Class — `(cls as any).identifier` was not a string.",
+    );
+  }
+  return name;
+};
+
+// ---------------------------------------------------------------------------
+// Field auto-construction from a Schema.Top pass-through (e.g. `name: Schema.String`)
+// or from a value returned by `field(...)`.
+// ---------------------------------------------------------------------------
+
+const compileFieldEntry = (
+  fieldName: string,
+  parentName: string,
+  raw: unknown,
+): IRFieldDef => {
+  // Case 1: explicit field(...) wrapper
+  const rawF = readRawField(raw);
+  if (rawF !== null) {
+    return {
+      type: outputTypeToIR(rawF.type),
+      nonNull: rawF.nonNull,
+      semanticNonNull: rawF.semanticNonNull,
+      description: rawF.description,
+      args: argsToIR(rawF.args),
+      resolve: makeResolveFromUserFn(fieldName, parentName, rawF.resolve),
+    };
+  }
+  // Case 2: ScalarType<T> shorthand: `field: DateScalar` is valid (skips the field() wrap)
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    "name" in (raw as object) &&
+    "schema" in (raw as object) &&
+    typeof (raw as { name: unknown }).name === "string"
+  ) {
+    return {
+      type: outputTypeToIR(raw as ScalarType<unknown>),
+      nonNull: false,
+      args: {},
+      resolve: defaultPassthroughResolve(fieldName),
+    };
+  }
+  // Case 3: Schema.Top — either a bare pass-through (e.g. `title: Schema.String`)
+  // or a pipe-attached resolver (`title: Schema.String.pipe(GraphQL.resolve((u) => u.title))`).
+  if (typeof raw === "object" && raw !== null && "ast" in (raw as object)) {
+    const fn = readResolverFn(raw);
+    if (fn !== undefined) {
+      return {
+        type: outputTypeToIR(raw as Schema.Top),
+        nonNull: false,
+        args: {},
+        resolve: makeResolveFromUserFn(fieldName, parentName, (p, _a, _i) => fn(p)),
+      };
+    }
+    return {
+      type: outputTypeToIR(raw as Schema.Top),
+      nonNull: false,
+      args: {},
+      resolve: defaultPassthroughResolve(fieldName),
+    };
+  }
+  // Case 4: ID marker shorthand
+  if (raw === ID) {
+    return {
+      type: { kind: "scalar", name: "ID" },
+      nonNull: false,
+      args: {},
+      resolve: defaultPassthroughResolve(fieldName),
+    };
+  }
+  // Case 5: Schema.Class shorthand
+  if (typeof raw === "function") {
+    return {
+      type: outputTypeToIR(raw as SchemaClass<unknown>),
+      nonNull: false,
+      args: {},
+      resolve: defaultPassthroughResolve(fieldName),
+    };
+  }
+  throw new Error(
+    `effect-graphql: field "${parentName}.${fieldName}" — value is not a recognized field shape (expected Schema.Top, GraphQL.field(...), Schema.Class, ScalarType, or GraphQL.ID).`,
+  );
+};
+
+const defaultPassthroughResolve = (
+  fieldName: string,
+): IRFieldDef["resolve"] => {
+  return (parent, _args, _ctx, _info) => {
+    const v =
+      typeof parent === "object" && parent !== null
+        ? (parent as Record<string, unknown>)[fieldName]
+        : undefined;
+    return Effect.succeed(v);
+  };
+};
+
+const makeResolveFromUserFn = (
+  fieldName: string,
+  _parentName: string,
+  fn: ((parent: any, args: any, info: any) => unknown) | undefined,
+): IRFieldDef["resolve"] => {
+  if (fn === undefined) return defaultPassthroughResolve(fieldName);
+  return (parent, args, _ctx, info) => {
+    let v: unknown;
+    try {
+      v = fn(parent, args, info);
+    } catch (err) {
+      return Effect.die(err);
+    }
+    if (isEffect(v)) return v as Effect.Effect<unknown, unknown, unknown>;
+    return Effect.succeed(v);
+  };
+};
+
+const argsToIR = (args: ArgDefs): Record<string, { schema: Schema.Top; description?: string }> => {
+  const out: Record<string, { schema: Schema.Top; description?: string }> = {};
+  for (const [name, def] of Object.entries(args)) {
+    if (def === null || def === undefined) continue;
+    // Schema.Class is a function with a static `ast` — treat the class itself
+    // as a Schema.Top.
+    if ((typeof def === "object" || typeof def === "function") && "ast" in (def as object)) {
+      out[name] = { schema: def as Schema.Top };
+      continue;
+    }
+    if (typeof def === "object" && "schema" in (def as object)) {
+      const a = def as { schema: Schema.Top; description?: string };
+      out[name] = a.description !== undefined ? { schema: a.schema, description: a.description } : { schema: a.schema };
     }
   }
   return out;
 };
 
-/**
- * Wrap a user-supplied `fields` thunk so that each public `FieldConfig`'s
- * `args: Record<string, ArgValue>` is normalized into the IR's
- * `Record<string, IRArgDef>` shape lazily (each time the thunk is invoked).
- */
-const wrapFieldsThunk = (
-  thunk: () => Record<string, { args?: Record<string, ArgValue>; [k: string]: unknown }>,
-): (() => Record<string, IRFieldDef>) => {
-  return () => {
-    const raw = thunk();
-    const out: Record<string, IRFieldDef> = {};
-    for (const [name, def] of Object.entries(raw)) {
-      const { args, ...rest } = def;
-      out[name] = {
-        ...(rest as Omit<IRFieldDef, "args">),
-        args: normalizeArgs(args),
-      };
-    }
-    return out;
-  };
-};
-
-const cloneIR = (ir: IR): IR => ({
-  types: new Map(ir.types),
-  nodeTypes: new Map(ir.nodeTypes),
-  queryFields: ir.queryFields,
-  mutationFields: ir.mutationFields,
-  subscriptionFields: ir.subscriptionFields,
-  viewerField: ir.viewerField,
-});
-
-const IR_KEY = Symbol.for("effect-graphql/IR");
-
-interface InternalBuilder<R> extends SchemaBuilder<R> {
-  readonly [IR_KEY]: IR;
-}
-
-const make = <R>(ir: IR): SchemaBuilder<R> => {
-  const self: InternalBuilder<R> = {
-    _R: (r) => r,
-    [IR_KEY]: ir,
-
-    objectType: (<T, R2>(
-      name: string,
-      config: ObjectTypeConfig<T, R2>,
-    ): { ref: ObjectRef<T>; builder: SchemaBuilder<R | R2> } => {
-      const next = cloneIR(ir);
-      const irType: IRObjectType = {
-        kind: "object",
-        name,
-        description: config.description,
-        interfaces: (config.interfaces ?? []).map((i) => i.name),
-        fields: wrapFieldsThunk(
-          config.fields as () => Record<string, { args?: Record<string, ArgValue> }>,
-        ),
-      };
-      next.types.set(name, irType);
-      const ref: ObjectRef<T> = {
-        _tag: "NamedOutputRef",
-        kind: "named",
-        objectKind: "object",
-        name,
-      };
-      return { ref, builder: make<any>(next) as SchemaBuilder<R | R2> };
-    }) as SchemaBuilder<R>["objectType"],
-
-    node: (<T, R2>(
-      name: string,
-      config: NodeConfig<T, R2>,
-    ): { ref: NodeRef<T>; builder: SchemaBuilder<R | R2> } => {
-      const next = cloneIR(ir);
-      const interfaces = [
-        ...(config.interfaces ?? []).map((i) => i.name),
-        "Node",
-      ];
-      const irType: IRNodeType = {
-        kind: "node",
-        name,
-        description: config.description,
-        interfaces,
-        fields: wrapFieldsThunk(
-          config.fields as () => Record<string, { args?: Record<string, ArgValue> }>,
-        ),
-        loadOne: config.loadOne as IRNodeType["loadOne"],
-      };
-      next.types.set(name, irType);
-      next.nodeTypes.set(name, irType);
-      const ref: NodeRef<T> = {
-        _tag: "NamedOutputRef",
-        kind: "named",
-        objectKind: "node",
-        name,
-        typename: name,
-      };
-      return { ref, builder: make<any>(next) as SchemaBuilder<R | R2> };
-    }) as SchemaBuilder<R>["node"],
-
-    queryType: (<R2>(config: RootTypeConfig<R2>): SchemaBuilder<R | R2> => {
-      const next = cloneIR(ir);
-      next.queryFields = wrapFieldsThunk(
-        config.fields as () => Record<string, { args?: Record<string, ArgValue> }>,
-      );
-      return make<any>(next) as SchemaBuilder<R | R2>;
-    }) as SchemaBuilder<R>["queryType"],
-
-    mutationType: (<R2>(config: RootTypeConfig<R2>): SchemaBuilder<R | R2> => {
-      const next = cloneIR(ir);
-      next.mutationFields = wrapFieldsThunk(
-        config.fields as () => Record<string, { args?: Record<string, ArgValue> }>,
-      );
-      return make<any>(next) as SchemaBuilder<R | R2>;
-    }) as SchemaBuilder<R>["mutationType"],
-
-    subscriptionType: (<R2>(
-      config: SubscriptionRootTypeConfig<R2>,
-    ): SchemaBuilder<R | R2> => {
-      const next = cloneIR(ir);
-      const userThunk = config.fields as unknown as () => Record<
-        string,
-        { args?: Record<string, ArgValue>; [k: string]: unknown }
-      >;
-      next.subscriptionFields = (() => {
-        const raw = userThunk();
-        const out: Record<string, IRSubscriptionFieldDef> = {};
-        for (const [name, def] of Object.entries(raw)) {
-          const { args, ...rest } = def;
-          out[name] = {
-            ...(rest as Omit<IRSubscriptionFieldDef, "args">),
-            args: normalizeArgs(args),
-          };
-        }
-        return out;
-      }) as () => Record<string, IRSubscriptionFieldDef>;
-      return make<any>(next) as SchemaBuilder<R | R2>;
-    }) as SchemaBuilder<R>["subscriptionType"],
-
-    viewer: (<T, R2>(config: ViewerConfig<T, R2>): SchemaBuilder<R | R2> => {
-      const next = cloneIR(ir);
-      const fieldDef: IRFieldDef = {
-        type: config.type as IRFieldDef["type"],
-        nonNull: false,
-        description: config.description,
-        args: {},
-        resolve: config.resolve as IRFieldDef["resolve"],
-      };
-      next.viewerField = fieldDef;
-      return make<any>(next) as SchemaBuilder<R | R2>;
-    }) as SchemaBuilder<R>["viewer"],
-
-    connection<T>(
-      nodeRef: NodeRef<T> | ObjectRef<T>,
-    ): { ref: ConnectionRef<T>; builder: SchemaBuilder<R> } {
-      const next = cloneIR(ir);
-      const connectionName = `${nodeRef.name}Connection`;
-      const edgeName = `${nodeRef.name}Edge`;
-      const irType: IRConnectionType = {
-        kind: "connection",
-        name: connectionName,
-        edgeName,
-        nodeTypeName: nodeRef.name,
-      };
-      next.types.set(connectionName, irType);
-      const edgeRef: NamedOutputRef<{ cursor: string; node: T | null }> = {
-        _tag: "NamedOutputRef",
-        kind: "named",
-        name: edgeName,
-      };
-      const ref: ConnectionRef<T> = {
-        _tag: "NamedOutputRef",
-        kind: "named",
-        objectKind: "connection",
-        name: connectionName,
-        edgeName,
-        nodeRef,
-        edgeRef,
-      };
-      return { ref, builder: make<R>(next) };
-    },
-
-    input<S extends Schema.Top>(
-      name: string,
-      schema: S,
-    ): { ref: InputRef<S>; builder: SchemaBuilder<R> } {
-      const next = cloneIR(ir);
-      // Annotate with `identifier` so schema-bridge can name the
-      // GraphQLInputObjectType and dedupe in its registry.
-      const named = schema.annotate({ identifier: name }) as unknown as S;
-      const irType: IRInputType = {
-        kind: "input",
-        name,
-        schema: named,
-      };
-      next.types.set(name, irType);
-      const ref: InputRef<S> = {
-        _tag: "InputRef",
-        name,
-        schema: named,
-      };
-      return { ref, builder: make<R>(next) };
-    },
-
-    scalar<T>(
-      name: string,
-      config: ScalarConfig<T>,
-    ): { ref: ScalarRef<T>; builder: SchemaBuilder<R> } {
-      const next = cloneIR(ir);
-      const irType: IRScalarType = {
-        kind: "scalar",
-        name,
-        description: config.description,
-        schema: config.schema as IRScalarType["schema"],
-      };
-      next.types.set(name, irType);
-      const ref: ScalarRef<T> = {
-        _tag: "ScalarOutputRef",
-        kind: "scalar",
-        name,
-      };
-      return { ref, builder: make<R>(next) };
-    },
-
-    arg<S extends Schema.Top>(input: S | InputRef<S>): ArgDef<S> {
-      if (
-        typeof input === "object" &&
-        input !== null &&
-        (input as { _tag?: string })._tag === "InputRef"
-      ) {
-        const ref = input as InputRef<S>;
-        return { schema: ref.schema, inputRef: ref };
-      }
-      return { schema: input as S };
-    },
-
-    toSchema<RA extends R = R>(
-      runtime: ManagedRuntime.ManagedRuntime<RA, never> | null,
-    ): TypedGraphQLSchema<Exclude<R, RA>> {
-      return lower<RA, Exclude<R, RA>>(
-        ir,
-        runtime ?? null,
-      ) as TypedGraphQLSchema<Exclude<R, RA>>;
-    },
-  };
-
-  return self;
-};
+// ---------------------------------------------------------------------------
+// Node.layer
+// ---------------------------------------------------------------------------
 
 /**
- * Internal accessor for downstream tasks (lowering pipeline, tests). The IR
- * is exposed via a symbol-keyed property on every builder produced by `make`.
- * This is not part of the public API.
- */
-export const getIR = <R>(builder: SchemaBuilder<R>): IR =>
-  (builder as unknown as InternalBuilder<R>)[IR_KEY];
-
-export const createBuilder = (): SchemaBuilder<never> => make<never>(emptyIR());
-
-/**
- * Build a `ListOutputRef` from any output ref.
+ * What a `fields:` callback may produce per entry.
  *
- * | Want    | How                                                       |
- * | ------- | --------------------------------------------------------- |
- * | `[T]`   | `list(ref)`                                               |
- * | `[T!]`  | `list(ref, { itemNonNull: true })`                        |
- * | `[T]!`  | `list(ref)` + `nonNull: true` on the field config         |
- * | `[T!]!` | `list(ref, { itemNonNull: true })` + `nonNull: true`      |
+ * The callback receives a `FieldHelper<T>` (see below). Calls to the helper
+ * always produce `FieldDef<T, R>` — bound to T — so resolver `parent` params
+ * are typed `T` without ever relying on contextual typing through generics.
+ * Bare `Schema.Top` and class-shorthand passthroughs coexist in the same slot.
  */
-export function list<T>(
-  inner: NamedOutputRef<T> | ScalarOutputRef<T> | ListOutputRef<T>,
-  options?: { itemNonNull?: boolean },
-): ListOutputRef<ReadonlyArray<T>> {
+type NodeFieldOutput<T> =
+  | FieldDef<T, any>
+  | WithResolver<T, Schema.Top>
+  | Schema.Top
+  | ScalarType<any>
+  | SchemaClass<any>
+  | IDMarker;
+
+/**
+ * The typed helper passed to a `fields:` callback. Every call binds `parent`
+ * to `T` — so a typo on `parent.somePropTypo` is a compile-time TS2339,
+ * regardless of whether contextual typing happens to flow through nested
+ * generics in object literals (which it does NOT reliably do for free
+ * generic functions producing values inside a `Record<string, ...>` slot).
+ *
+ * This is the same callback-with-typed-helper pattern Effect uses for things
+ * like `Effect.fn` and `Schema.transformOrFail` — the user receives a closure
+ * with the relevant types pre-bound, and writes resolver bodies inside it.
+ *
+ * Two overloads: with options (custom resolver / args / nullability override)
+ * and without (just a type, default property-name passthrough).
+ */
+export interface FieldHelper<T> {
+  <Type, R = never, A extends ArgDefs | undefined = undefined>(
+    type: SchemaClass<Type> | ScalarType<Type> | IDMarker | Schema.Top,
+    options: FieldOptions<T, Type, A extends ArgDefs ? ArgsShape<A> : {}, R> & { args?: A },
+  ): FieldDef<T, R>;
+  <Type>(
+    type: SchemaClass<Type> | ScalarType<Type> | IDMarker | Schema.Top,
+  ): FieldDef<T, never>;
+}
+
+/**
+ * `GraphQL.Node.layer(User)({...})` is curried so TypeScript can pin the
+ * parent type `T` for every field's resolver. Effect itself uses the same
+ * idiom (`Layer.effect(Tag)(effect)` — `Layer.d.ts:941`).
+ *
+ * The `fields:` slot is a CALLBACK that receives a `FieldHelper<T>`, not a
+ * plain object. Why: TypeScript's contextual typing reliably flows into a
+ * callback parameter, but does NOT flow into free generics of helper
+ * functions producing values inside a record literal. The callback shape is
+ * the only one that survives the full inference path:
+ *
+ *   `Node.layer(User)` pins T=User
+ *   ↓ second call's `fields` slot is typed `(f: FieldHelper<User>) => ...`
+ *   ↓ user writes `(f) => ({ name: f(Schema.String, { resolve: (u) => u.id }) })`
+ *   ↓ each `f(...)` call returns `FieldDef<User, R>` — `u: User` is bound by
+ *     `FieldHelper<User>`, not by ambient contextual typing
+ *
+ * Bare `Schema.Top` (passthrough) and `Schema.Top.pipe(GraphQL.resolve(fn))`
+ * still work in the same slot — the callback returns a `Record<string,
+ * NodeFieldOutput<T>>` and both are valid `NodeFieldOutput<T>` shapes.
+ */
+export const Node = {
+  layer<T>(cls: SchemaClass<T>) {
+    const name = classIdentifier(cls);
+    return <RLoad = never, RViewer = never, RFields = never>(
+      config: {
+        readonly fields?: (f: FieldHelper<T>) => Record<string, NodeFieldOutput<T>>;
+        readonly load: (id: string) => Effect.Effect<T | null, any, RLoad>;
+        readonly viewer?: () => Effect.Effect<T, any, RViewer>;
+        readonly description?: string;
+      },
+    ): Layer.Layer<never, never, RLoad | RViewer | RFields> => {
+      const load = (
+        id: string,
+        ctx: Context.Context<unknown>,
+      ): Effect.Effect<unknown, unknown, unknown> => {
+        try {
+          const eff = config.load(id);
+          return Effect.provide(eff, ctx) as Effect.Effect<unknown, unknown, unknown>;
+        } catch (err) {
+          return Effect.die(err);
+        }
+      };
+
+      const viewer = config.viewer
+        ? (ctx: Context.Context<unknown>): Effect.Effect<unknown, unknown, unknown> => {
+            try {
+              const eff = config.viewer!();
+              return Effect.provide(eff, ctx) as Effect.Effect<unknown, unknown, unknown>;
+            } catch (err) {
+              return Effect.die(err);
+            }
+          }
+        : undefined;
+
+      // Build the IR fragment lazily inside the Layer's effect. This is what
+      // lets transitively-referenced types (custom scalars used by fields)
+      // register themselves into the active build's IR — `outputTypeToIR`
+      // calls `recordFragment` on demand, and that side channel is only
+      // listening while the Layer's effect runs.
+      return Layer.effectDiscard(
+        Effect.sync(() => {
+          // Invoke the user's `fields:` callback with the parent-bound `field`
+          // helper. The helper IS the same `field()` exported below — its
+          // signature is generic over TParent, but inside the callback the
+          // `FieldHelper<T>` declared above pins TParent=T at every call site.
+          const rawFields = config.fields !== undefined
+            ? config.fields(field as unknown as FieldHelper<T>)
+            : {};
+          const fields: Record<string, IRFieldDef> = {};
+          for (const [fname, fdef] of Object.entries(rawFields)) {
+            fields[fname] = compileFieldEntry(fname, name, fdef);
+          }
+          // Auto-synthesize `id: ID!` when the user omits it. The Schema.Class
+          // must have an `id` property (enforced by Relay's Node interface); we
+          // encode it as a global ID at resolve time. If the user DID supply an
+          // `id` field we leave theirs untouched.
+          if (!("id" in fields)) {
+            fields["id"] = {
+              type: { kind: "scalar", name: "ID" },
+              nonNull: true,
+              args: {},
+              resolve: (parent, _args, _ctx, _info) => {
+                const rawId =
+                  typeof parent === "object" && parent !== null
+                    ? String((parent as Record<string, unknown>)["id"] ?? "")
+                    : "";
+                return Effect.succeed(encodeGlobalId(name, rawId));
+              },
+            };
+          }
+          const fragment: IRNodeFragment = {
+            kind: "node",
+            name,
+            description: config.description,
+            fields,
+            load,
+            viewer,
+          };
+          recordFragment(fragment);
+        }),
+      ) as unknown as Layer.Layer<never, never, RLoad | RViewer>;
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Connection.layer / Connection / toConnection
+// ---------------------------------------------------------------------------
+
+const CONNECTION_NODE_KEY = Symbol("v2/connection-node-name");
+
+export const Connection = Object.assign(
+  function Connection<T>(cls: SchemaClass<T>): ConnectionType<T> {
+    const name = classIdentifier(cls);
+    const out = Object.create(null) as Record<symbol, unknown>;
+    out[CONNECTION_NODE_KEY] = name;
+    return out as unknown as ConnectionType<T>;
+  },
+  {
+    layer<T>(cls: SchemaClass<T>): Layer.Layer<never, never, never> {
+      const nodeName = classIdentifier(cls);
+      return Layer.effectDiscard(
+        Effect.sync(() => {
+          const fragment: IRConnectionFragment = {
+            kind: "connection",
+            name: `${nodeName}Connection`,
+            edgeName: `${nodeName}Edge`,
+            nodeTypeName: nodeName,
+          };
+          recordFragment(fragment);
+        }),
+      ) as Layer.Layer<never, never, never>;
+    },
+  },
+);
+
+export function toConnection<T>(
+  rows: ReadonlyArray<T>,
+  options: { cursor: (t: T) => string; hasNextPage: boolean; hasPreviousPage?: boolean },
+): ConnectionPayload<T> {
+  const edges = rows.map((node) => ({ node, cursor: options.cursor(node) }));
+  const startCursor = edges.length > 0 ? edges[0]!.cursor : null;
+  const endCursor = edges.length > 0 ? edges[edges.length - 1]!.cursor : null;
   return {
-    _tag: "ListOutputRef",
-    kind: "list",
-    inner: inner as OutputTypeRef<unknown>,
-    itemNonNull: options?.itemNonNull ?? false,
+    edges,
+    pageInfo: {
+      hasNextPage: options.hasNextPage,
+      hasPreviousPage: options.hasPreviousPage ?? false,
+      startCursor,
+      endCursor,
+    },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Query / Mutation / Subscription field constructors
+// ---------------------------------------------------------------------------
+
+const RAW_QF_KEY = Symbol("v2/raw-query-field");
+const RAW_MF_KEY = Symbol("v2/raw-mutation-field");
+const RAW_SF_KEY = Symbol("v2/raw-subscription-field");
+
+interface RootFieldRaw {
+  type: FieldOutputType | ConnectionType<unknown>;
+  nonNull: boolean;
+  semanticNonNull?: boolean;
+  description?: string;
+  args: ArgDefs;
+  resolve: (parent: any, args: any, info: any) => unknown;
+}
+
+interface SubFieldRaw {
+  type: FieldOutputType;
+  nonNull: boolean;
+  description?: string;
+  args: ArgDefs;
+  stream: (parent: any, args: any, info: any) => unknown;
+}
+
+const readRoot = (v: unknown, key: symbol): RootFieldRaw | null => {
+  if (typeof v !== "object" || v === null) return null;
+  const r = (v as Record<symbol, unknown>)[key];
+  return (r as RootFieldRaw) ?? null;
+};
+
+const readSub = (v: unknown): SubFieldRaw | null => {
+  if (typeof v !== "object" || v === null) return null;
+  const r = (v as Record<symbol, unknown>)[RAW_SF_KEY];
+  return (r as SubFieldRaw) ?? null;
+};
+
+// queryField — overloaded so the args type tightens on Connection input
+export function queryField<T, R = never>(
+  type: ConnectionType<T>,
+  options: {
+    readonly description?: string;
+    readonly resolve: (
+      root: unknown,
+      args: PaginationArgs,
+    ) => Effect.Effect<ConnectionPayload<T>, any, R>;
+  },
+): QueryFieldDef<R>;
+export function queryField<T, A extends ArgDefs | undefined, R = never>(
+  type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top,
+  options: {
+    readonly nonNull?: boolean;
+    readonly semanticNonNull?: boolean;
+    readonly description?: string;
+    readonly args?: A;
+    readonly resolve: (
+      root: unknown,
+      args: A extends ArgDefs ? ArgsShape<A> : {},
+    ) => Effect.Effect<T, any, R>;
+  },
+): QueryFieldDef<R>;
+export function queryField(
+  type: any,
+  options: any,
+): QueryFieldDef<any> {
+  const raw: RootFieldRaw = {
+    type,
+    nonNull: options?.nonNull ?? false,
+    semanticNonNull: options?.semanticNonNull,
+    description: options?.description,
+    args: options?.args ?? {},
+    resolve: options.resolve,
+  };
+  const out = Object.create(null) as Record<symbol, unknown>;
+  out[RAW_QF_KEY] = raw;
+  return out as unknown as QueryFieldDef<any>;
+}
+
+// mutationField — overloaded so that an `input: SchemaClass<I>` injects an `input: I`
+// arg into the resolver signature without the user having to declare it twice.
+export function mutationField<O, I, A extends ArgDefs | undefined = undefined, R = never>(
+  options: {
+    readonly output: SchemaClass<O> | ScalarType<O> | IDMarker | Schema.Top | ConnectionType<O>;
+    readonly nonNull?: boolean;
+    readonly semanticNonNull?: boolean;
+    readonly description?: string;
+    readonly input: SchemaClass<I>;
+    readonly args?: A;
+    readonly resolve: (
+      root: unknown,
+      args: (A extends ArgDefs ? ArgsShape<A> : {}) & { readonly input: I },
+    ) => Effect.Effect<O, any, R>;
+  },
+): MutationFieldDef<R>;
+export function mutationField<O, A extends ArgDefs | undefined = undefined, R = never>(
+  options: {
+    readonly output: SchemaClass<O> | ScalarType<O> | IDMarker | Schema.Top | ConnectionType<O>;
+    readonly nonNull?: boolean;
+    readonly semanticNonNull?: boolean;
+    readonly description?: string;
+    readonly args?: A;
+    readonly resolve: (
+      root: unknown,
+      args: A extends ArgDefs ? ArgsShape<A> : {},
+    ) => Effect.Effect<O, any, R>;
+  },
+): MutationFieldDef<R>;
+export function mutationField(options: any): MutationFieldDef<any> {
+  const args: ArgDefs = { ...(options.args ?? {}) } as ArgDefs;
+  if (options.input !== undefined) {
+    // Schema.Class's static `ast` is a Declaration node — schema-bridge can't
+    // map that directly to a GraphQLInputObjectType. Reconstruct a Struct
+    // from the class's `fields` and re-annotate with the class identifier so
+    // the input type comes out named correctly.
+    args["input"] = classToInputSchema(options.input);
+  }
+  const raw: RootFieldRaw = {
+    type: options.output as FieldOutputType,
+    nonNull: options.nonNull ?? false,
+    semanticNonNull: options.semanticNonNull,
+    description: options.description,
+    args,
+    resolve: options.resolve as RootFieldRaw["resolve"],
+  };
+  const out = Object.create(null) as Record<symbol, unknown>;
+  out[RAW_MF_KEY] = raw;
+  return out as unknown as MutationFieldDef<any>;
+}
+
+// subscriptionField
+export function subscriptionField<T, A extends ArgDefs | undefined, R = never>(
+  type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top,
+  options: {
+    readonly nonNull?: boolean;
+    readonly description?: string;
+    readonly args?: A;
+    readonly stream: (
+      root: unknown,
+      args: A extends ArgDefs ? ArgsShape<A> : {},
+    ) =>
+      | Stream.Stream<T, any, R>
+      | Effect.Effect<Stream.Stream<T, any, R>, any, R>;
+  },
+): SubscriptionFieldDef<R> {
+  const raw: SubFieldRaw = {
+    type,
+    nonNull: options.nonNull ?? false,
+    description: options.description,
+    args: (options.args ?? {}) as ArgDefs,
+    stream: options.stream,
+  };
+  const out = Object.create(null) as Record<symbol, unknown>;
+  out[RAW_SF_KEY] = raw;
+  return out as unknown as SubscriptionFieldDef<R>;
+}
+
+// ---------------------------------------------------------------------------
+// Query.layer / Mutation.layer / Subscription.layer
+// ---------------------------------------------------------------------------
+
+const compileRootField = (
+  fieldName: string,
+  raw: RootFieldRaw,
+): IRFieldDef => {
+  return {
+    type: outputTypeToIR(raw.type),
+    nonNull: raw.nonNull,
+    semanticNonNull: raw.semanticNonNull,
+    description: raw.description,
+    args: argsToIR(raw.args),
+    resolve: makeRootResolve(fieldName, raw.resolve),
+  };
+};
+
+const makeRootResolve = (
+  _fieldName: string,
+  fn: (parent: any, args: any, info: any) => unknown,
+): IRFieldDef["resolve"] => {
+  return (parent, args, _ctx, info) => {
+    let v: unknown;
+    try {
+      v = fn(parent, args, info);
+    } catch (err) {
+      return Effect.die(err);
+    }
+    if (isEffect(v)) return v as Effect.Effect<unknown, unknown, unknown>;
+    return Effect.succeed(v);
+  };
+};
+
+const compileSubField = (raw: SubFieldRaw): IRSubscriptionFieldDef => {
+  return {
+    type: outputTypeToIR(raw.type),
+    nonNull: raw.nonNull,
+    description: raw.description,
+    args: argsToIR(raw.args),
+    subscribe: (parent, args, ctx, info) => {
+      let v: unknown;
+      try {
+        v = raw.stream(parent, args, info);
+      } catch (err) {
+        return Stream.die(err);
+      }
+      // If stream() returns an Effect<Stream<...>>, unwrap via Stream.unwrap.
+      if (isEffect(v)) {
+        const provided = Effect.provide(
+          v as Effect.Effect<Stream.Stream<unknown, unknown, unknown>, unknown, unknown>,
+          ctx,
+        );
+        return Stream.unwrap(provided) as Stream.Stream<unknown, unknown, unknown>;
+      }
+      return v as Stream.Stream<unknown, unknown, unknown>;
+    },
+  };
+};
+
+export const Query = {
+  layer<R = never>(
+    fields: Record<string, QueryFieldDef<R>>,
+  ): Layer.Layer<never, never, R> {
+    return Layer.effectDiscard(
+      Effect.sync(() => {
+        const out: Record<string, IRFieldDef> = {};
+        for (const [name, def] of Object.entries(fields)) {
+          const raw = readRoot(def, RAW_QF_KEY);
+          if (!raw) {
+            throw new Error(
+              `effect-graphql: GraphQL.Query.layer field "${name}" must be created via GraphQL.queryField(...)`,
+            );
+          }
+          out[name] = compileRootField(name, raw);
+        }
+        const fragment: IRQueryFragment = { kind: "query", fields: out };
+        recordFragment(fragment);
+      }),
+    ) as unknown as Layer.Layer<never, never, R>;
+  },
+};
+
+export const Mutation = {
+  layer<R = never>(
+    fields: Record<string, MutationFieldDef<R>>,
+  ): Layer.Layer<never, never, R> {
+    return Layer.effectDiscard(
+      Effect.sync(() => {
+        const out: Record<string, IRFieldDef> = {};
+        for (const [name, def] of Object.entries(fields)) {
+          const raw = readRoot(def, RAW_MF_KEY);
+          if (!raw) {
+            throw new Error(
+              `effect-graphql: GraphQL.Mutation.layer field "${name}" must be created via GraphQL.mutationField(...)`,
+            );
+          }
+          out[name] = compileRootField(name, raw);
+        }
+        const fragment: IRMutationFragment = { kind: "mutation", fields: out };
+        recordFragment(fragment);
+      }),
+    ) as unknown as Layer.Layer<never, never, R>;
+  },
+};
+
+export const Subscription = {
+  layer<R = never>(
+    fields: Record<string, SubscriptionFieldDef<R>>,
+  ): Layer.Layer<never, never, R> {
+    return Layer.effectDiscard(
+      Effect.sync(() => {
+        const out: Record<string, IRSubscriptionFieldDef> = {};
+        for (const [name, def] of Object.entries(fields)) {
+          const raw = readSub(def);
+          if (!raw) {
+            throw new Error(
+              `effect-graphql: GraphQL.Subscription.layer field "${name}" must be created via GraphQL.subscriptionField(...)`,
+            );
+          }
+          out[name] = compileSubField(raw);
+        }
+        const fragment: IRSubscriptionFragment = { kind: "subscription", fields: out };
+        recordFragment(fragment);
+      }),
+    ) as unknown as Layer.Layer<never, never, R>;
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Global IDs + mutation helpers (re-exports of v1 logic with v2 names)
+// ---------------------------------------------------------------------------
+
+export const globalId = (typename: string, id: string): string =>
+  encodeGlobalId(typename, id);
+
+export const parseGlobalId = (id: string): { typename: string; id: string } =>
+  decodeGlobalId(id);
+
+export const deletedId = (typename: string, id: string): string =>
+  deletedIdFn(typename, id);
+
+export const edgePayload = <T>(
+  cursor: string,
+  node: T,
+): { cursor: string; node: T } => connectionEdgeFn(cursor, node);
+
+// ---------------------------------------------------------------------------
+// Re-export type aliases users may want
+// ---------------------------------------------------------------------------
+
+export type { ConnectionType, ConnectionPayload, PaginationArgs, ScalarType, FieldDef, QueryFieldDef, MutationFieldDef, SubscriptionFieldDef } from "./types.ts";

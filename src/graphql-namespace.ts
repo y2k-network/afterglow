@@ -1,19 +1,39 @@
 /**
- * Public `GraphQL` namespace: bundles every transport-layer entry point under
- * one import. Users wire transports as:
- *
- * ```ts
- * import { GraphQL } from "effect-graphql"
- *
- * GraphQL.toHttpApp(schema)
- * GraphQL.toWebSocketApp(schema, { onConnect })
- * ```
+ * The `GraphQL` namespace — re-exports the public API under one name. Users
+ * write `GraphQL.Node.layer(User)({...})` rather than importing each piece.
  */
-export { toHttpApp, type ToHttpAppOptions } from "./http.ts";
 export {
-  toWebSocketApp,
-  type ConnectionData,
-  type ToWebSocketAppOptions,
-  type ToWebSocketAppResult,
-} from "./ws.ts";
-export { executeBfs, type BfsExecuteArgs } from "./executor-bfs.ts";
+  Connection,
+  ID,
+  Mutation,
+  Node,
+  Query,
+  Scalar,
+  Subscription,
+  deletedId,
+  edgePayload,
+  field,
+  globalId,
+  mutationField,
+  parseGlobalId,
+  queryField,
+  resolve,
+  subscriptionField,
+  toConnection,
+} from "./builder.ts";
+
+export { buildSchema, toHttpApp, type ToHttpAppOptions } from "./http.ts";
+export { toWebSocketApp, type ToWebSocketAppOptions, type ToWebSocketAppResult } from "./ws.ts";
+
+export type {
+  ConnectionPayload,
+  ConnectionType,
+  FieldDef,
+  IDMarker,
+  MutationFieldDef,
+  PaginationArgs,
+  QueryFieldDef,
+  ScalarType,
+  SchemaClass,
+  SubscriptionFieldDef,
+} from "./types.ts";

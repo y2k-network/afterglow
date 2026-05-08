@@ -1,6 +1,36 @@
+/**
+ * V2 IR fragments. Each `GraphQL.Node.layer / Query.layer / ...` call
+ * contributes one of these via the module-internal IRRegistry side channel.
+ * The lowering pipeline (`./lower.ts`) collects a snapshot of fragments at
+ * `toHttpApp` time and produces the `GraphQLSchema`.
+ *
+ * The shapes are similar to v1's IR but:
+ *  - resolver bodies live on the IR fragment directly (no thunk indirection)
+ *  - field args carry their full v2 typing context (Schema-class identifier,
+ *    optional input ref); decoders are still pre-built in `runtime.ts`
+ *  - connection fragments carry a phantom node-type pointer for downstream
+ *    pagination injection at lower-time
+ */
 import type { Context, Effect, Schema, Stream } from "effect";
 import type { GraphQLResolveInfo } from "graphql";
-import type { OutputTypeRef } from "./types.ts";
+
+// ---------------------------------------------------------------------------
+// Output type references — the lower-time descriptor of a field's return type.
+// Independent of nullability (which lives on the field, not the type).
+// ---------------------------------------------------------------------------
+
+export type IROutputType =
+  | { readonly kind: "named"; readonly name: string }
+  | { readonly kind: "scalar"; readonly name: string }
+  | {
+      readonly kind: "list";
+      readonly inner: IROutputType;
+      readonly itemNonNull: boolean;
+    };
+
+// ---------------------------------------------------------------------------
+// Field & argument descriptors
+// ---------------------------------------------------------------------------
 
 export interface IRArgDef {
   readonly schema: Schema.Top;
@@ -8,15 +38,8 @@ export interface IRArgDef {
 }
 
 export interface IRFieldDef {
-  readonly type: OutputTypeRef<unknown>;
-  /** false = nullable on the wire (default); true = wrapped in GraphQLNonNull. */
+  readonly type: IROutputType;
   readonly nonNull: boolean;
-  /**
-   * Optional explicit override for `@semanticNonNull` emission. `undefined`
-   * (the default) means "auto-detect" — lower.ts emits on every wire-nullable
-   * position. `false` suppresses emission; `true` is equivalent to undefined
-   * (auto). Wire-non-null positions never emit regardless.
-   */
   readonly semanticNonNull?: boolean;
   readonly description?: string;
   readonly args: Record<string, IRArgDef>;
@@ -28,13 +51,8 @@ export interface IRFieldDef {
   ) => Effect.Effect<unknown, unknown, unknown>;
 }
 
-/**
- * A subscription field. Like `IRFieldDef` but the resolver yields a
- * `Stream<A, E, R>` instead of an `Effect<A, E, R>`. The lowering pipeline
- * bridges this to graphql-js's `subscribe` AsyncIterable contract.
- */
 export interface IRSubscriptionFieldDef {
-  readonly type: OutputTypeRef<unknown>;
+  readonly type: IROutputType;
   readonly nonNull: boolean;
   readonly description?: string;
   readonly args: Record<string, IRArgDef>;
@@ -46,84 +64,129 @@ export interface IRSubscriptionFieldDef {
   ) => Stream.Stream<unknown, unknown, unknown>;
 }
 
-export interface IRObjectType {
-  readonly kind: "object";
-  readonly name: string;
-  readonly description?: string;
-  readonly interfaces: ReadonlyArray<string>;
-  readonly fields: () => Record<string, IRFieldDef>;
-}
+// ---------------------------------------------------------------------------
+// Per-fragment shapes
+// ---------------------------------------------------------------------------
 
-export interface IRNodeType {
+export interface IRNodeFragment {
   readonly kind: "node";
   readonly name: string;
   readonly description?: string;
-  readonly interfaces: ReadonlyArray<string>;
-  readonly fields: () => Record<string, IRFieldDef>;
-  readonly loadOne: (
+  readonly fields: Record<string, IRFieldDef>;
+  readonly load: (
     id: string,
+    ctx: Context.Context<unknown>,
+  ) => Effect.Effect<unknown, unknown, unknown>;
+  /** Optional: registers `viewer: T` on the root Query type. */
+  readonly viewer?: (
     ctx: Context.Context<unknown>,
   ) => Effect.Effect<unknown, unknown, unknown>;
 }
 
-export interface IRInputType {
-  readonly kind: "input";
+export interface IRObjectFragment {
+  readonly kind: "object";
   readonly name: string;
   readonly description?: string;
-  /** Struct schema — input fields derive from its AST in schema-bridge. */
-  readonly schema: Schema.Top;
+  readonly fields: Record<string, IRFieldDef>;
 }
 
-export interface IRScalarType {
-  readonly kind: "scalar";
-  readonly name: string;
-  readonly description?: string;
-  readonly schema: Schema.Codec<unknown, string | number | boolean, never, never>;
-}
-
-export interface IRConnectionType {
+export interface IRConnectionFragment {
   readonly kind: "connection";
   readonly name: string;
   readonly edgeName: string;
   readonly nodeTypeName: string;
 }
 
-export interface IREnumType {
-  readonly kind: "enum";
+export interface IRScalarFragment {
+  readonly kind: "scalar";
   readonly name: string;
-  readonly values: ReadonlyArray<string>;
+  readonly description?: string;
+  readonly schema: Schema.Codec<unknown, string | number | boolean, never, never>;
 }
 
-export type IRType =
-  | IRObjectType
-  | IRNodeType
-  | IRInputType
-  | IRScalarType
-  | IRConnectionType
-  | IREnumType;
+export interface IRInputFragment {
+  readonly kind: "input";
+  readonly name: string;
+  readonly schema: Schema.Top;
+}
+
+export interface IRQueryFragment {
+  readonly kind: "query";
+  readonly fields: Record<string, IRFieldDef>;
+}
+
+export interface IRMutationFragment {
+  readonly kind: "mutation";
+  readonly fields: Record<string, IRFieldDef>;
+}
+
+export interface IRSubscriptionFragment {
+  readonly kind: "subscription";
+  readonly fields: Record<string, IRSubscriptionFieldDef>;
+}
+
+export type IRFragment =
+  | IRNodeFragment
+  | IRObjectFragment
+  | IRConnectionFragment
+  | IRScalarFragment
+  | IRInputFragment
+  | IRQueryFragment
+  | IRMutationFragment
+  | IRSubscriptionFragment;
+
+// ---------------------------------------------------------------------------
+// Aggregated IR — what the lowering pipeline operates on after fragments are
+// collected from a SchemaLayer build.
+// ---------------------------------------------------------------------------
 
 export interface IR {
-  readonly types: Map<string, IRType>;
-  readonly nodeTypes: Map<string, IRNodeType>;
-  queryFields: (() => Record<string, IRFieldDef>) | undefined;
-  mutationFields: (() => Record<string, IRFieldDef>) | undefined;
-  subscriptionFields:
-    | (() => Record<string, IRSubscriptionFieldDef>)
-    | undefined;
-  /**
-   * Set by `builder.viewer(...)`. Merged into the Query type at lower-time
-   * under the fixed field name `viewer`. If the user also supplies a `viewer`
-   * field via `queryType({ fields: { viewer: ... } })`, this slot wins — the
-   * dedicated registration is the canonical path.
-   */
-  viewerField: IRFieldDef | undefined;
+  readonly nodes: Map<string, IRNodeFragment>;
+  readonly objects: Map<string, IRObjectFragment>;
+  readonly connections: Map<string, IRConnectionFragment>;
+  readonly scalars: Map<string, IRScalarFragment>;
+  readonly inputs: Map<string, IRInputFragment>;
+  readonly queryFields: Record<string, IRFieldDef>;
+  readonly mutationFields: Record<string, IRFieldDef>;
+  readonly subscriptionFields: Record<string, IRSubscriptionFieldDef>;
 }
 
 export const emptyIR = (): IR => ({
-  types: new Map(),
-  nodeTypes: new Map(),
-  queryFields: undefined,
-  mutationFields: undefined,
-  subscriptionFields: undefined,
-  viewerField: undefined,
+  nodes: new Map(),
+  objects: new Map(),
+  connections: new Map(),
+  scalars: new Map(),
+  inputs: new Map(),
+  queryFields: {},
+  mutationFields: {},
+  subscriptionFields: {},
 });
+
+export const addFragment = (ir: IR, fragment: IRFragment): void => {
+  switch (fragment.kind) {
+    case "node":
+      ir.nodes.set(fragment.name, fragment);
+      break;
+    case "object":
+      ir.objects.set(fragment.name, fragment);
+      break;
+    case "connection":
+      ir.connections.set(fragment.name, fragment);
+      break;
+    case "scalar":
+      ir.scalars.set(fragment.name, fragment);
+      break;
+    case "input":
+      ir.inputs.set(fragment.name, fragment);
+      break;
+    case "query":
+      Object.assign(ir.queryFields, fragment.fields);
+      break;
+    case "mutation":
+      Object.assign(ir.mutationFields, fragment.fields);
+      break;
+    case "subscription":
+      Object.assign(ir.subscriptionFields, fragment.fields);
+      break;
+  }
+};

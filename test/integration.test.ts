@@ -143,6 +143,32 @@ describe("query: node(id) — global id dispatch", () => {
 });
 
 // ----------------------------------------------------------------------------
+// 2b. nodes(ids:) batch lookup.
+// ----------------------------------------------------------------------------
+
+describe("query: nodes(ids) — batch lookup", () => {
+  test("preserves order and nulls unknown typenames", async () => {
+    const todoId = encodeGlobalId("Todo", "1");
+    const ghostId = encodeGlobalId("Ghost", "x");
+    const res = await post(
+      `query Q($ids: [ID!]!) {
+         nodes(ids: $ids) {
+           __typename
+           ... on Todo { id title }
+         }
+       }`,
+      { variables: { ids: [todoId, ghostId, todoId] }, userId: "ada" },
+    );
+    expect(res.body.errors).toBeUndefined();
+    const nodes = (res.body.data as { nodes: Array<unknown> }).nodes;
+    expect(nodes).toHaveLength(3);
+    expect(nodes[0]).toMatchObject({ __typename: "Todo", id: todoId });
+    expect(nodes[1]).toBeNull();
+    expect(nodes[2]).toMatchObject({ __typename: "Todo", id: todoId });
+  });
+});
+
+// ----------------------------------------------------------------------------
 // 3. Connection pagination: edges, cursor, pageInfo.
 // ----------------------------------------------------------------------------
 
@@ -282,6 +308,17 @@ describe("resolver error surfacing", () => {
     expect(res.body.errors).toBeDefined();
     expect(res.body.errors!.length).toBeGreaterThan(0);
     expect(res.body.data).toBeUndefined();
+  });
+
+  test("resolver throw surfaces as a field error with non-null errors[]", async () => {
+    // deleteTodo decodes the id via parseGlobalId — passing garbage triggers
+    // an InvalidGlobalIdError, which propagates as a field error.
+    const res = await post(
+      `mutation { deleteTodo(id: "not-a-base64-global-id") }`,
+      { userId: "ada" },
+    );
+    expect(res.body.errors).toBeDefined();
+    expect(res.body.errors!.length).toBeGreaterThan(0);
   });
 });
 
