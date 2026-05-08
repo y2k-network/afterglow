@@ -846,14 +846,27 @@ the gap.
 ## Executors
 
 `GraphQL.toHttpApp` defaults to graphql-js's executor. An opt-in
-`executor: "bfs"` mode runs every field at a given depth concurrently
-— useful only when a workload has wider async aggregation needs than
-Effect's `Request` / `RequestResolver` cycle covers (resolver bodies
-that do their own batching across separate microtask ticks). For
-typical Relay workloads the default executor is faster and already
-gets DataLoader-style N+1 collapse via Effect; benchmarks in `bench/`
-show BFS adds ~2× overhead in absolute throughput on a single
-resolver and a 100-sibling fan-out.
+`executor: "bfs"` mode runs every field at a given depth concurrently.
+For typical Relay workloads the default executor is faster — benchmarks
+in `bench/` show BFS adds ~1.8× overhead on a single resolver and on a
+100-sibling fan-out.
+
+The framework's batching primitive is **Effect's `RequestResolver`**,
+not the executor choice. `RequestResolver.fromFunctionBatched` aggregates
+concurrent `Request` instances inside the same fiber forest into a single
+batched callback, regardless of executor. That's how N+1 collapse works
+here — the BFS demo in `bench/bfs-batching.bench.ts` shows both default
+and BFS collapse to a single batched call of 100 requests. BFS does not
+improve batching.
+
+Honest note: our BFS implementation may also just be sub-optimal —
+we haven't profiled it against the default executor's hand-tuned
+graphql-js path. The overhead could be in our per-level work-queue
+construction or in the `Effect.all` wrapping of single-field levels.
+Investigation is a v1.0.x task; the fix would narrow the gap but not
+eliminate it (RequestResolver still does the actual batching). For
+now, BFS is opt-in for niche workloads where async gaps are wider
+than `Request` / `RequestResolver`'s cycle covers.
 
 ```ts
 GraphQL.toHttpApp(SchemaLayer, { runtime, executor: "bfs" })
