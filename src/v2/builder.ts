@@ -100,6 +100,82 @@ export function Scalar<T>(
 const SCALAR_FRAG_KEY = Symbol("v2/scalar-frag");
 
 // ---------------------------------------------------------------------------
+// Resolver annotation — `Schema.String.pipe(GraphQL.resolve(u => u.name))`
+//
+// The pipe form attaches a resolver function to a schema as a Symbol-keyed
+// own property. `compileFieldEntry` checks for this on every Schema.Top it
+// sees — when present, the function becomes the field's resolver; when
+// absent, the schema is a default property-name pass-through.
+//
+// Inference: TypeScript flows the parent type `T` from the surrounding
+// `Node.layer(User)({ fields: {...} })` into the resolver's `parent: T`
+// argument via contextual typing on the slot's mapped type. The trick that
+// makes this work through `.pipe()` (which normally blocks contextual
+// typing) is the indexed-signature shape on `NodeFields<T>` below — a
+// `Record<...>` would NOT propagate the type. Don't switch back to `Record`.
+// ---------------------------------------------------------------------------
+
+const RESOLVER_FN_KEY = Symbol("v2/resolver-fn");
+
+/**
+ * A schema with a resolver function attached as a Symbol-keyed annotation.
+ * The phantom `[RESOLVER_PARENT]` carries the parent type so contextual
+ * typing on `Node.layer(T)({...})` can flow `T` into the resolver's
+ * `parent` parameter — invariant in `TParent` to keep cross-type usage
+ * safe (a `WithResolver<User, _>` won't accidentally fit in a slot expecting
+ * `WithResolver<Other, _>`).
+ */
+declare const RESOLVER_PARENT: unique symbol;
+type WithResolver<TParent, S extends Schema.Top> = S & {
+  readonly [RESOLVER_PARENT]?: { _i: (p: TParent) => void; _o: () => TParent };
+};
+
+/**
+ * Pipe-compatible resolver attachment.
+ *
+ * @example
+ * ```ts
+ * Node.layer(User)({
+ *   fields: {
+ *     name: Schema.String.pipe(GraphQL.resolve((u) => u.name)),  // u: User
+ *     bio: Schema.String,                                         // pass-through
+ *   },
+ *   load: ...,
+ * })
+ * ```
+ *
+ * The function `fn` runs in the resolver pipeline like any other resolver —
+ * it can return a plain value or an `Effect`. The returned schema is the
+ * same schema as the input, with a private resolver annotation attached;
+ * downstream consumers that don't know about the annotation see a normal
+ * `Schema.Top`.
+ */
+export function resolve<TParent, S extends Schema.Top>(
+  fn: (parent: TParent) => S["Type"] | Effect.Effect<S["Type"], any, any>,
+): (self: S) => WithResolver<TParent, S> {
+  return (self) => {
+    // Clone-with-annotation: we don't want to mutate the user's schema. The
+    // simplest approach is `schema.annotate({})` which always returns a fresh
+    // Rebuild — then we attach our private symbol on the copy.
+    const annotated = self.annotate({}) as Schema.Top;
+    Object.defineProperty(annotated, RESOLVER_FN_KEY, {
+      value: fn,
+      enumerable: false,
+      configurable: false,
+    });
+    return annotated as WithResolver<TParent, S>;
+  };
+}
+
+const readResolverFn = (
+  v: unknown,
+): ((parent: any) => unknown) | undefined => {
+  if (typeof v !== "object" || v === null) return undefined;
+  const fn = (v as Record<symbol, unknown>)[RESOLVER_FN_KEY];
+  return typeof fn === "function" ? (fn as (p: any) => unknown) : undefined;
+};
+
+// ---------------------------------------------------------------------------
 // Field — used inside Node/Object `fields:` blocks
 // ---------------------------------------------------------------------------
 
@@ -275,8 +351,18 @@ const compileFieldEntry = (
       resolve: defaultPassthroughResolve(fieldName),
     };
   }
-  // Case 3: Schema.Top pass-through (e.g. `title: Schema.String`)
+  // Case 3: Schema.Top — either a bare pass-through (e.g. `title: Schema.String`)
+  // or a pipe-attached resolver (`title: Schema.String.pipe(GraphQL.resolve((u) => u.title))`).
   if (typeof raw === "object" && raw !== null && "ast" in (raw as object)) {
+    const fn = readResolverFn(raw);
+    if (fn !== undefined) {
+      return {
+        type: outputTypeToIR(raw as Schema.Top),
+        nonNull: false,
+        args: {},
+        resolve: makeResolveFromUserFn(fieldName, parentName, (p, _a, _i) => fn(p)),
+      };
+    }
     return {
       type: outputTypeToIR(raw as Schema.Top),
       nonNull: false,
@@ -362,24 +448,33 @@ const argsToIR = (args: ArgDefs): Record<string, { schema: Schema.Top; descripti
 /**
  * What's accepted in a Node/Object's `fields:` slot.
  *
- * Carries the parent type `T` so that `field(...)` calls inside the slot infer
+ * Carries the parent type `T` so resolver functions inside the slot infer
  * `parent: T` via TypeScript's contextual typing — this is the mechanism that
  * eliminates the `parent: any` leak in resolvers. A typo like `(u) => u.idd`
  * is a compile error because `u: User` is contextually inferred from the
- * surrounding `Record<string, NodeFieldEntry<User>>` slot.
+ * surrounding slot.
  *
- * The four shapes:
- *   - `FieldDef<T, R>`      — `field(type, { resolve: (parent: T) => ... })`
- *   - `Schema.Top`          — pass-through: `title: Schema.String`
- *   - `ScalarType<X>`       — pass-through to a custom scalar: `at: DateScalar`
- *   - `SchemaClass<X>` etc. — pass-through to a Node/Object type
+ * Five accepted shapes:
+ *   - `Schema.Top`                                — bare pass-through
+ *   - `Schema.Top.pipe(GraphQL.resolve(fn))`      — pipe-attached resolver
+ *   - `GraphQL.field(type, { resolve, args, ...})` — explicit field config
+ *   - `ScalarType<X>` / `SchemaClass<X>` / `ID`   — type-only shorthand
  */
 type NodeFieldEntry<T> =
   | FieldDef<T, any>
+  | WithResolver<T, Schema.Top>
   | Schema.Top
   | ScalarType<any>
   | SchemaClass<any>
   | IDMarker;
+
+/**
+ * Mapped-type slot for `Node.layer(T)({ fields: ... })`. Indexed signature
+ * (`{ readonly [K: string]: ... }`) instead of `Record<string, ...>` —
+ * the indexed form is what propagates contextual typing through `.pipe()`
+ * to `GraphQL.resolve(fn)`'s `fn` argument. `Record` does not.
+ */
+type NodeFields<T> = { readonly [fieldName: string]: NodeFieldEntry<T> };
 
 /**
  * `GraphQL.Node.layer(User)({...})` is curried so TypeScript can infer the
@@ -399,7 +494,7 @@ export const Node = {
     const name = classIdentifier(cls);
     return <RLoad = never, RViewer = never>(
       config: {
-        readonly fields?: Record<string, NodeFieldEntry<T>>;
+        readonly fields?: NodeFields<T>;
         readonly load: (id: string) => Effect.Effect<T | null, any, RLoad>;
         readonly viewer?: () => Effect.Effect<T, any, RViewer>;
         readonly description?: string;

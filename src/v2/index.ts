@@ -50,6 +50,7 @@ export {
   mutationField,
   parseGlobalId,
   queryField,
+  resolve,
   subscriptionField,
   toConnection,
 } from "./builder.ts";

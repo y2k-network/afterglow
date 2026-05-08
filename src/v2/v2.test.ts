@@ -17,7 +17,7 @@ import {
 import { execute, parse, printSchema } from "graphql";
 import { GraphQL } from "../index.ts";
 import { buildSchema } from "./http.ts";
-import { Node, Query, Mutation, Connection, Subscription, queryField, mutationField, subscriptionField, field, ID, Scalar, globalId, parseGlobalId, deletedId, toConnection } from "./builder.ts";
+import { Node, Query, Mutation, Connection, Subscription, queryField, mutationField, subscriptionField, field, resolve, ID, Scalar, globalId, parseGlobalId, deletedId, toConnection } from "./builder.ts";
 
 // ---------------------------------------------------------------------------
 // Type-level inference assertions
@@ -142,6 +142,28 @@ const _typoGuard = Node.layer(HarnessUser)({
 void _typoGuard;
 
 // ---------------------------------------------------------------------------
+// Pipe-resolver acceptance test
+//
+// `Schema.String.pipe(GraphQL.resolve(u => u.name))` must:
+//   - infer u: HarnessUser from the surrounding Node.layer(HarnessUser)({...}) slot
+//   - produce a TS2339 on a typo
+//   - coexist with bare `Schema.String` (pass-through) and `field(...)` (config)
+// ---------------------------------------------------------------------------
+
+const _pipeGuard = Node.layer(HarnessUser)({
+  fields: {
+    name: Schema.String.pipe(resolve((u) => u.id)),  // u: HarnessUser, inferred
+    bare: Schema.String,                              // pass-through
+    bad: Schema.String.pipe(resolve((u) =>
+      // @ts-expect-error — TS2339: Property 'EMAIL_TYPO' does not exist on type 'HarnessUser'
+      u.EMAIL_TYPO
+    )),
+  },
+  load: () => Effect.succeed(null),
+});
+void _pipeGuard;
+
+// ---------------------------------------------------------------------------
 // Runtime smoke test — full Todo schema, basic query
 // ---------------------------------------------------------------------------
 
@@ -171,9 +193,9 @@ const TodoStoreLive = Layer.effect(TodoStoreT)(
 );
 
 test("smoke: build schema and run a query", async () => {
+  // id: ID! auto-synthesized — no field(ID, ...) needed
   const TodoNode = Node.layer(TodoT)({
     fields: {
-      id: field(ID, { resolve: (t) => globalId("TodoT", t.id) }),
       title: Schema.String,
       completed: Schema.Boolean,
     },
@@ -218,7 +240,6 @@ test("smoke: build schema and run a query", async () => {
 test("smoke: node(id) returns the loaded entity", async () => {
   const TodoNode = Node.layer(TodoT)({
     fields: {
-      id: field(ID, { resolve: (t) => globalId("TodoT", t.id) }),
       title: Schema.String,
     },
     load: (id) =>
@@ -309,7 +330,6 @@ test("smoke: mutation with input + deletedId helper", async () => {
 
   const TodoNode = Node.layer(TodoT)({
     fields: {
-      id: field(ID, { resolve: (t) => globalId("TodoT", t.id) }),
       title: Schema.String,
     },
     load: (id) =>
@@ -367,7 +387,6 @@ test("smoke: custom scalar via GraphQL.Scalar", async () => {
 
   const EventNode = Node.layer(Event)({
     fields: {
-      id: field(ID, { resolve: (e) => globalId("Event", e.id) }),
       at: field(DateScalar),
     },
     load: () => Effect.succeed(null),
@@ -391,9 +410,6 @@ test("smoke: viewer field is registered when a Node.layer supplies one", async (
   class Me extends Schema.Class<Me>("Me")({ id: Schema.String }) {}
 
   const MeNode = Node.layer(Me)({
-    fields: {
-      id: field(ID, { resolve: (m) => globalId("Me", m.id) }),
-    },
     load: (id) => Effect.succeed(new Me({ id })),
     viewer: () => Effect.succeed(new Me({ id: "viewer-1" })),
   });
@@ -412,6 +428,72 @@ test("smoke: viewer field is registered when a Node.layer supplies one", async (
   });
   expect(result.errors).toBeUndefined();
   expect((result.data as any).viewer.id).toBe(globalId("Me", "viewer-1"));
+});
+
+test("smoke: pipe-resolver shorthand executes at runtime", async () => {
+  class Person extends Schema.Class<Person>("Person")({
+    firstName: Schema.String,
+    lastName: Schema.String,
+  }) {}
+
+  const PersonNode = Node.layer(Person)({
+    fields: {
+      // pipe form: parent type flows from Node.layer(Person)
+      fullName: Schema.String.pipe(resolve((p) => `${p.firstName} ${p.lastName}`)),
+      // bare passthrough
+      firstName: Schema.String,
+    },
+    load: (_id) => Effect.succeed(new Person({ firstName: "Ada", lastName: "Lovelace" })),
+  });
+
+  const QueryLayer = Query.layer({
+    person: queryField(Person, {
+      resolve: () => Effect.succeed(new Person({ firstName: "Ada", lastName: "Lovelace" })),
+    }),
+  });
+
+  const SchemaLayer = Layer.mergeAll(PersonNode, QueryLayer);
+  const schema = buildSchema(SchemaLayer, null);
+
+  const result = await execute({
+    schema,
+    document: parse(`{ person { firstName fullName } }`),
+    contextValue: Context.empty(),
+  });
+  expect(result.errors).toBeUndefined();
+  expect((result.data as any).person.firstName).toBe("Ada");
+  expect((result.data as any).person.fullName).toBe("Ada Lovelace");
+});
+
+test("smoke: missing-fragment error message names the type and the fix", () => {
+  // A Connection type referenced by a query field must be registered. If the
+  // user forgets it, they should see an actionable message naming the field,
+  // the type, and what to add — not "type X is not registered."
+  class Item extends Schema.Class<Item>("Item")({ id: Schema.String }) {}
+
+  const ItemNode = Node.layer(Item)({
+    fields: { id: field(ID, { resolve: (i) => globalId("Item", i.id) }) },
+    load: () => Effect.succeed(null),
+  });
+
+  // Reference an unregistered Connection. We deliberately bypass the auto-
+  // registration that `Connection(Item)` would do — by using a stale name.
+  // Easier: register Item but not its connection, then add a queryField that
+  // names a "FooConnection" via a manual Schema.Class trick. Cleanest test:
+  // make a node that references an unregistered named type via a pass-through.
+  class Ghost extends Schema.Class<Ghost>("Ghost")({ id: Schema.String }) {}
+  // Don't register Ghost. Reference it from a field type in Item to trigger
+  // the missing-type error.
+  const BadNode = Node.layer(Item)({
+    fields: {
+      id: field(ID, { resolve: (i) => globalId("Item", i.id) }),
+      ghost: field(Ghost, { resolve: () => null }),
+    },
+    load: () => Effect.succeed(null),
+  });
+  void ItemNode;
+  const SchemaLayer = Layer.mergeAll(BadNode);
+  expect(() => buildSchema(SchemaLayer, null)).toThrow(/Add the layer that defines Ghost/);
 });
 
 test("smoke: full integration — viewer + connection + mutation with per-request CurrentUser", async () => {

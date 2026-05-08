@@ -428,6 +428,47 @@ function makeFieldDefinitionNode(
   };
 }
 
+/**
+ * Build an actionable error message when a field references a type that's
+ * not in the registry. Names the field, the missing type, and tells the user
+ * which Layer to add. Particularly important for connection types — users
+ * forget to merge `Connection.layer(Todo)` and previously got a vague
+ * "type TodoConnection is not registered" with no hint about the fix.
+ */
+function missingTypeError(
+  typeName: string,
+  ownerName: string,
+  fieldName: string,
+): string {
+  const fieldRef = ownerName === "<root>" ? `field "${fieldName}"` : `field "${ownerName}.${fieldName}"`;
+
+  // Connection types: derive the underlying node from the name and tell the
+  // user exactly what to add.
+  if (typeName.endsWith("Connection")) {
+    const nodeName = typeName.slice(0, -"Connection".length);
+    return (
+      `effect-graphql: ${fieldRef} returns type "${typeName}" but no connection type for ${nodeName} is registered. ` +
+      `Use \`GraphQL.Connection(${nodeName})\` as the field type — \`queryField(GraphQL.Connection(${nodeName}), { resolve: ... })\` — ` +
+      `or add \`GraphQL.Connection.layer(${nodeName})\` to your SchemaLayer's \`Layer.mergeAll(...)\`.`
+    );
+  }
+  if (typeName.endsWith("Edge")) {
+    const nodeName = typeName.slice(0, -"Edge".length);
+    return (
+      `effect-graphql: ${fieldRef} returns edge type "${typeName}" but no connection for ${nodeName} is registered. ` +
+      `Add \`GraphQL.Connection.layer(${nodeName})\` to your SchemaLayer.`
+    );
+  }
+
+  // Generic missing-type fallback. Most likely the user forgot to add the
+  // node/object's `*.layer` to their merge.
+  return (
+    `effect-graphql: ${fieldRef} references type "${typeName}" but it's not registered. ` +
+    `Add the layer that defines ${typeName} (\`GraphQL.Node.layer(${typeName})({...})\` or similar) ` +
+    `to your SchemaLayer's \`Layer.mergeAll(...)\`.`
+  );
+}
+
 function resolveOutputType(
   ref: IROutputType,
   registry: Map<string, GraphQLNamedType>,
@@ -440,18 +481,14 @@ function resolveOutputType(
       if (builtin) return builtin;
       const named = registry.get(ref.name);
       if (!named) {
-        throw new Error(
-          `effect-graphql: scalar "${ref.name}" referenced by field "${ownerName}.${fieldName}" is not registered.`,
-        );
+        throw new Error(missingTypeError(ref.name, ownerName, fieldName));
       }
       return named as GraphQLOutputType;
     }
     case "named": {
       const named = registry.get(ref.name);
       if (!named) {
-        throw new Error(
-          `effect-graphql: type "${ref.name}" referenced by field "${ownerName}.${fieldName}" is not registered.`,
-        );
+        throw new Error(missingTypeError(ref.name, ownerName, fieldName));
       }
       return named as GraphQLOutputType;
     }
