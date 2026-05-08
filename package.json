@@ -5,20 +5,60 @@
   "license": "MIT",
   "author": "Athanor",
   "homepage": "https://github.com/athanor/alembic",
-  "module": "src/index.ts",
-  "main": "src/index.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/athanor/alembic.git"
+  },
+  "bugs": {
+    "url": "https://github.com/athanor/alembic/issues"
+  },
+  "keywords": [
+    "graphql",
+    "relay",
+    "effect",
+    "schema",
+    "server",
+    "typescript"
+  ],
+  "module": "dist/index.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
+  "sideEffects": false,
   "scripts": {
-    "ci:inference-guard": "bash scripts/inference-guard.sh"
+    "build": "bun scripts/build.ts",
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test",
+    "test:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov",
+    "lint": "bunx tsc --noEmit && bun test src/lint.test.ts",
+    "bench": "bun bench/run.ts",
+    "ci:inference-guard": "bash scripts/inference-guard.sh",
+    "api:check": "bunx api-extractor run --verbose",
+    "api:update": "bunx api-extractor run --local --verbose",
+    "changeset": "bunx changeset",
+    "version": "bunx changeset version",
+    "prepublishOnly": "bun run typecheck && bun run test && bun run build"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
+    "@microsoft/api-extractor": "^7.58.7",
     "@types/bun": "latest",
     "@types/node": "^25.6.2",
     "mitata": "^1.0.34"

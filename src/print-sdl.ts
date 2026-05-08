@@ -152,5 +152,5 @@ function attachFieldDirectives<
     };
     return merged;
   });
-  return { ...def, fields: next } as DefinitionNode;
+  return { ...def, fields: next } as unknown as DefinitionNode;
 }

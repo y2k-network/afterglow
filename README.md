@@ -1,5 +1,12 @@
 # @athanor/alembic
 
+[![test](https://github.com/athanor/alembic/actions/workflows/test.yml/badge.svg)](https://github.com/athanor/alembic/actions/workflows/test.yml)
+[![lint](https://github.com/athanor/alembic/actions/workflows/lint.yml/badge.svg)](https://github.com/athanor/alembic/actions/workflows/lint.yml)
+[![relay-compile](https://github.com/athanor/alembic/actions/workflows/relay-compile.yml/badge.svg)](https://github.com/athanor/alembic/actions/workflows/relay-compile.yml)
+[![coverage](https://img.shields.io/badge/coverage-62%25-yellow)](./scripts/check-coverage.ts)
+[![npm](https://img.shields.io/npm/v/@athanor/alembic.svg)](https://www.npmjs.com/package/@athanor/alembic)
+[![license](https://img.shields.io/npm/l/@athanor/alembic.svg)](./LICENSE)
+
 A GraphQL server built for Relay, with Effect as its type system.
 
 Install it, declare your nodes as Layers, run it. Your schema is already
