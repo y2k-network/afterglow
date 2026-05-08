@@ -1,0 +1,31 @@
+name: bench
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "bench/**"
+      - ".github/workflows/bench.yml"
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+
+      - name: Run benchmarks
+        run: bun run bench
+
+      - name: Upload bench results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-${{ github.sha }}
+          path: bench/results.json
+
+      - name: Soft-fail regression check
+        run: bun scripts/check-bench-regression.ts
+        continue-on-error: true

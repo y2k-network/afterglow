@@ -1,0 +1,67 @@
+name: Bug report
+description: Something isn't working the way the docs or types suggest it should.
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please include a minimal
+        reproduction — the smaller the better.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: A clear description of the unexpected behaviour.
+      placeholder: When I do X, I expected Y, but got Z.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: |
+        Code that triggers the bug. Inline a snippet, or link to a repo.
+        For inference / type-level bugs, include the snippet and the
+        inferred type or the exact tsc error.
+      render: ts
+    validations:
+      required: true
+  - type: input
+    id: alembic-version
+    attributes:
+      label: "@athanor/alembic version"
+      placeholder: e.g. 0.1.0-alpha.1
+    validations:
+      required: true
+  - type: input
+    id: effect-version
+    attributes:
+      label: effect version
+      placeholder: e.g. 4.0.0-beta.64
+    validations:
+      required: true
+  - type: input
+    id: graphql-version
+    attributes:
+      label: graphql version
+      placeholder: e.g. 16.14.0
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime
+      placeholder: "Bun 1.3.10 / Node 22.x / etc."
+    validations:
+      required: true
+  - type: input
+    id: typescript-version
+    attributes:
+      label: TypeScript version
+      placeholder: e.g. 5.9.3
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Logs, screenshots, or anything else relevant.
