@@ -97,7 +97,7 @@ describe("builder.viewer", () => {
       loadOne: (id) => Effect.succeed(USERS[id] ?? null),
     });
 
-    const b2 = b1.viewer<User>({
+    const b2 = b1.viewer<User, CurrentUser>({
       type: userRef,
       resolve: () =>
         Effect.gen(function* () {
@@ -133,7 +133,7 @@ describe("builder.viewer", () => {
       },
     );
 
-    const b2 = b1.viewer<User>({
+    const b2 = b1.viewer<User, CurrentUser>({
       type: userRef,
       resolve: () =>
         Effect.gen(function* () {

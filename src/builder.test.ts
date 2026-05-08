@@ -89,9 +89,9 @@ test("input() annotates the schema with `identifier` so schema-bridge can name i
   expect(anon.ast.annotations?.identifier).toBeUndefined();
 });
 
-test("R accumulates across chained calls — inferred from resolvers (no explicit generic)", () => {
+test("R accumulates across chained calls via the explicit <T, R2> generic", () => {
   type User = { name: string };
-  const { builder: b1 } = createBuilder().objectType<User>("User", {
+  const { builder: b1 } = createBuilder().objectType<User, Database>("User", {
     fields: () => ({
       name: {
         type: scalars.String,
@@ -103,10 +103,10 @@ test("R accumulates across chained calls — inferred from resolvers (no explici
       },
     }),
   });
-  // R is inferred from the resolver's `yield* Database`.
+  // After the registration, R = Database (contributed by the explicit R2).
   const _db: SchemaBuilder<Database> = b1;
-  // Then add a queryType — R becomes Database | UserSession via inference.
-  const b2 = b1.queryType({
+  // Then add a queryType — R widens to Database | UserSession.
+  const b2 = b1.queryType<UserSession>({
     fields: () => ({
       me: {
         type: scalars.String,
@@ -376,16 +376,17 @@ class CurrentUser_T29 extends Context.Service<
 test("toSchema(runtime) infers RA from the runtime and yields the residual ReqR", () => {
   // R accumulates BOTH server-scoped TodoStore (via loadOne) and per-request
   // CurrentUser (via a viewer resolver). Builder is SchemaBuilder<TodoStore | CurrentUser>.
-  const { ref: userRef, builder: b1 } = createBuilder().objectType<{ id: string }>(
-    "Viewer",
-    {
-      fields: () => ({
-        id: { type: scalars.ID, nonNull: true, resolve: (u) => Effect.succeed(u.id) },
-      }),
-    },
-  );
-  // T = `{ id: string }`; R inferred from loadOne via higher-order capture.
-  const { builder: b2 } = b1.node<{ id: string }>("Item", {
+  const { ref: userRef, builder: b1 } = createBuilder().objectType<
+    { id: string },
+    never
+  >("Viewer", {
+    fields: () => ({
+      id: { type: scalars.ID, nonNull: true, resolve: (u) => Effect.succeed(u.id) },
+    }),
+  });
+  // Explicit `<T, R2>`: parent type and the resolver-service requirement
+  // contributed by `loadOne`.
+  const { builder: b2 } = b1.node<{ id: string }, TodoStore_T29>("Item", {
     fields: () => ({
       id: { type: scalars.ID, nonNull: true, resolve: (t) => Effect.succeed(t.id) },
     }),
@@ -395,8 +396,8 @@ test("toSchema(runtime) infers RA from the runtime and yields the residual ReqR"
         return yield* store.findById(id);
       }),
   });
-  // T = `{ id: string }`; R inferred from resolve.
-  const b3 = b2.viewer<{ id: string }>({
+  // Explicit `<T, R2>` for viewer too.
+  const b3 = b2.viewer<{ id: string }, CurrentUser_T29>({
     type: userRef,
     resolve: () =>
       Effect.gen(function* () {
@@ -541,12 +542,14 @@ test("connection field resolver auto-types args with first/last/after/before", (
   expect(schema.getQueryType()?.getFields().docs).toBeDefined();
 });
 
-test("R inferred from loadOne and resolvers — NO second explicit generic", () => {
-  // The test name is the contract: users write `node<User>(...)` (single
-  // generic) and R is inferred from `loadOne` + every resolver via
-  // higher-order capture of the config object.
+test("node R2 generic accumulates loadOne + field-resolver service requirements", () => {
+  // Caller supplies `<T, R2>` explicitly — `R2` is the union of every service
+  // any resolver or `loadOne` yields for this node.
   type DocT = { id: string; title: string };
-  const { ref: docRef, builder: b1 } = createBuilder().node<DocT>("Doc", {
+  const { ref: docRef, builder: b1 } = createBuilder().node<
+    DocT,
+    Database | UserSession
+  >("Doc", {
     fields: () => ({
       id: { type: scalars.ID, nonNull: true, resolve: (d) => Effect.succeed(d.id) },
       title: {
@@ -565,20 +568,22 @@ test("R inferred from loadOne and resolvers — NO second explicit generic", () 
         return { id, title: "hi" };
       }),
   });
-  // Builder R should be Database | UserSession via inference. Check by typed
-  // assignment — fails to compile if either piece was missed.
+  // Builder R is the explicit `R2` after this single registration.
   const _r: SchemaBuilder<Database | UserSession> = b1;
   expect(_r).toBeDefined();
   expect(docRef.name).toBe("Doc");
 });
 
-test("queryType / mutationType / viewer infer R via higher-order capture", () => {
-  const { ref: meRef, builder: b1 } = createBuilder().objectType<{ id: string }>("Me", {
+test("queryType / mutationType / viewer compose R via the explicit <R2> generic", () => {
+  const { ref: meRef, builder: b1 } = createBuilder().objectType<
+    { id: string },
+    never
+  >("Me", {
     fields: () => ({
       id: { type: scalars.ID, nonNull: true, resolve: (m) => Effect.succeed(m.id) },
     }),
   });
-  const b2 = b1.viewer<{ id: string }>({
+  const b2 = b1.viewer<{ id: string }, UserSession>({
     type: meRef,
     resolve: () =>
       Effect.gen(function* () {
@@ -586,7 +591,7 @@ test("queryType / mutationType / viewer infer R via higher-order capture", () =>
         return { id: s.userId };
       }),
   });
-  const b3 = b2.queryType({
+  const b3 = b2.queryType<Database>({
     fields: () => ({
       ping: {
         type: scalars.String,
@@ -606,8 +611,8 @@ test("queryType / mutationType / viewer infer R via higher-order capture", () =>
       },
     }),
   });
-  // R = UserSession (viewer) | Database (queryType) — no mutationType R since
-  // the mutation resolver is pure.
+  // R = UserSession (viewer) | Database (queryType). The mutation resolver is
+  // pure, so its `<R2>` defaults to `never`.
   const _r: SchemaBuilder<UserSession | Database> = b4;
   expect(_r).toBeDefined();
 });

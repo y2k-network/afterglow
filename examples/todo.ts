@@ -40,6 +40,7 @@ import {
     scalars,
     toHttpApp,
 } from "../src/index.ts";
+import type { SchemaBuilder } from "../src/builder.ts";
 
 // ---- Domain ----------------------------------------------------------------
 
@@ -176,8 +177,9 @@ export function buildAppSchema() {
         description: "ISO-8601 datetime serialized as a string.",
     });
 
-    // User node — the viewer.
-    const { ref: userRef, builder: b2 } = b1.node<User>("User", {
+    // User node — the viewer. Explicit `<T, R2>`: `User` parent, no service deps
+    // for the lightweight `loadOne` and field resolvers.
+    const { ref: userRef, builder: b2 } = b1.node<User, never>("User", {
         fields: () => ({
             id: {
                 type: scalars.ID,
@@ -188,9 +190,10 @@ export function buildAppSchema() {
         loadOne: (id) => Effect.succeed({ id }),
     });
 
-    // Todo node. Only `T = Todo` is explicit; `R` (= TodoStore) is inferred
-    // from `loadOne`'s Effect via higher-order capture.
-    const { ref: todoRef, builder: b3 } = b2.node<Todo>("Todo", {
+    // Todo node. Explicit `<T, R2>`: `Todo` parent, `TodoStore` resolver-service
+    // requirement contributed by `loadOne`. The builder's accumulated `R`
+    // widens to include `TodoStore` after this call.
+    const { ref: todoRef, builder: b3 } = b2.node<Todo, TodoStore>("Todo", {
         fields: () => ({
             id: {
                 type: scalars.ID,
@@ -230,9 +233,9 @@ export function buildAppSchema() {
         Schema.Struct({ title: Schema.String }),
     );
 
-    // builder.viewer — canonical Relay viewer query field. R (CurrentUser)
-    // is inferred from `resolve`'s Effect via higher-order capture.
-    const b6 = b5.viewer<User>({
+    // builder.viewer — canonical Relay viewer query field. Explicit `<T, R2>`:
+    // `User` ref type, `CurrentUser` per-request service for the resolver.
+    const b6 = b5.viewer<User, CurrentUser>({
         type: userRef,
         resolve: () =>
             Effect.gen(function* () {
@@ -242,9 +245,10 @@ export function buildAppSchema() {
     });
 
     // Builder R accumulates the union of *all* services any resolver yields —
-    // server-scoped and per-request alike — automatically inferred via
-    // higher-order capture. No `<TodoStore | CurrentUser>` annotation needed.
-    const b7 = b6.queryType({
+    // server-scoped and per-request alike. The explicit `<R2>` here declares
+    // the services the query resolvers use; the builder's `R` after this is
+    // `TodoStore | CurrentUser`.
+    const b7 = b6.queryType<TodoStore | CurrentUser>({
         fields: () => ({
             todos: {
                 type: todoConnRef,
@@ -280,8 +284,9 @@ export function buildAppSchema() {
         }),
     });
 
-    // Mutations. R inferred — no explicit generic.
-    const b8 = b7.mutationType({
+    // Mutations. Explicit `<R2>` for the union of services the mutation
+    // resolvers yield.
+    const b8 = b7.mutationType<TodoStore | CurrentUser>({
         fields: () => ({
             createTodo: {
                 type: todoRef,
@@ -318,6 +323,19 @@ export function buildAppSchema() {
             },
         }),
     });
+
+    // Type-level regression guards — fail to compile if any `bN` collapses to
+    // `SchemaBuilder<any>` (the T29 part-4 regression).
+    //
+    // `0 extends (1 & R)` is `true` only when `R = any`; we then reject the
+    // assignment by mapping `true` to `never`. If a future change re-introduces
+    // an `any` leak, these lines stop compiling.
+    type AssertNotAny<R> =
+        SchemaBuilder<[0] extends [1 & R] ? never : R>;
+    const _g7: AssertNotAny<TodoStore | CurrentUser> = b7;
+    const _g8: AssertNotAny<TodoStore | CurrentUser> = b8;
+    void _g7;
+    void _g8;
 
     return b8;
 }
