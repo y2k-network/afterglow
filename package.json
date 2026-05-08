@@ -1,5 +1,10 @@
 {
   "name": "@athanor/alembic",
+  "version": "0.1.0-alpha.1",
+  "description": "Effect-native, Relay-purpose-built GraphQL server. Layer-driven schemas, zero-config Relay defaults.",
+  "license": "MIT",
+  "author": "Athanor",
+  "homepage": "https://github.com/athanor/alembic",
   "module": "src/index.ts",
   "main": "src/index.ts",
   "type": "module",
