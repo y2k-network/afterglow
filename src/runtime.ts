@@ -13,8 +13,8 @@
  * AST walk in `assertSyncDecodable` (verbatim from v1 — services don't change
  * across major versions of @athanor/alembic).
  */
-import { Cause, Effect, Exit, Option, Schema } from "effect";
-import type { Context, ManagedRuntime, SchemaAST } from "effect";
+import { Cause, Context, Effect, Exit, Option, Schema } from "effect";
+import type { ManagedRuntime, SchemaAST } from "effect";
 import type { GraphQLResolveInfo } from "graphql";
 import type { IRArgDef, IRFieldDef, IRSubscriptionFieldDef } from "./ir.ts";
 
@@ -45,14 +45,16 @@ export function wrapResolver<R, ReqR = unknown>(
       return Promise.reject(err);
     }
 
+    const safeCtx = (ctx ?? Context.empty()) as Context.Context<unknown>;
+
     let eff: Effect.Effect<unknown, unknown, unknown>;
     try {
-      eff = userResolve(parent, decoded, ctx as Context.Context<unknown>, info);
+      eff = userResolve(parent, decoded, safeCtx, info);
     } catch (err) {
       return Promise.reject(err);
     }
 
-    const provided = Effect.provide(eff, ctx) as Effect.Effect<unknown, unknown, R>;
+    const provided = Effect.provide(eff, safeCtx) as Effect.Effect<unknown, unknown, R>;
 
     return runtime !== null
       ? runtime.runPromise(provided)
