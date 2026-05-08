@@ -168,13 +168,16 @@ const TodoNode = GraphQL.Node.layer(Todo)({
 
 // ---- Viewer (framework primitive) ------------------------------------------
 //
-// `GraphQL.Viewer.layer({...})` synthesizes a plain `type Viewer { ... }`
-// with the user-supplied session-scoped fields. Viewer is NOT a Node
-// implementor — Relay's `@refetchable` re-calls `Query.viewer`, never
-// `node(id:)`, so there's no need (and no point) for a global id on Viewer
-// itself. Domain ids live on `viewer.user`, `viewer.todos.edges[].node`, etc.
+// `GraphQL.Viewer.layer({...})` synthesizes a plain `type Viewer { ... }` with
+// the user-supplied session-scoped fields. Viewer is NOT a Node implementor —
+// Relay's `@refetchable` re-calls `Query.viewer`, never `node(id:)`, so there's
+// no need (and no point) for a global id on Viewer itself. Domain ids live on
+// `viewer.user`, `viewer.todos.edges[].node`, etc.
 //
-// `resolve` returns whatever opaque parent shape the field resolvers want.
+// In this example, `resolve` returns `{ userId: cu.id }`. That object becomes
+// the `parent` of every field resolver under `Viewer` — so `(v) => v.userId`
+// is well-typed below. Pick whatever shape your viewer's session-scoped data
+// needs; the framework imposes no constraint on the return type.
 
 const ViewerLayer = GraphQL.Viewer.layer({
   fields: (f) => ({
