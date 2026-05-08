@@ -1,18 +1,64 @@
-export { createBuilder, getIR, type SchemaBuilder } from "./builder.ts";
-export { lower } from "./lower.ts";
+export { createBuilder, getIR, list, type SchemaBuilder } from "./builder.ts";
+export { lower, type LowerOptions } from "./lower.ts";
+export { connectionEdge, deletedId } from "./mutation-shapes.ts";
+export {
+  aliasDirective,
+  appendEdgeDirective,
+  appendNodeDirective,
+  assignableDirective,
+  catchDirective,
+  connectionDirective,
+  dangerouslyUnaliasedFixmeDirective,
+  deferDirective,
+  deleteEdgeDirective,
+  deleteRecordDirective,
+  fetchableDirective,
+  inlineDirective,
+  noInlineDirective,
+  prependEdgeDirective,
+  prependNodeDirective,
+  rawResponseTypeDirective,
+  refetchableDirective,
+  relayDirective,
+  relayDirectives,
+  requiredDirective,
+  streamConnectionDirective,
+  streamDirective,
+  throwOnFieldErrorDirective,
+  updatableDirective,
+  waterfallDirective,
+} from "./relay-directives.ts";
 export {
   matchDirective,
   matchable,
   moduleDirective,
   relay3dDirectives,
 } from "./relay-3d.ts";
+export { decodeGlobalId, encodeGlobalId } from "./relay.ts";
 export { scalars } from "./scalars.ts";
 
-export * as GraphQL from "./http.ts";
+export * as GraphQL from "./graphql-namespace.ts";
 export { toHttpApp, type ToHttpAppOptions } from "./http.ts";
+export { executeBfs, type BfsExecuteArgs } from "./executor-bfs.ts";
+export {
+  toWebSocketApp,
+  type ConnectionData,
+  type ToWebSocketAppOptions,
+  type ToWebSocketAppResult,
+} from "./ws.ts";
+
+export type {
+  SubscriptionFieldConfig,
+  SubscriptionFieldResolver,
+  SubscriptionRootTypeConfig,
+} from "./types.ts";
+
+export type { IRSubscriptionFieldDef } from "./ir.ts";
 
 export type {
   ArgDef,
+  ArgValue,
+  AutoConnArgs,
   Connection,
   ConnectionArgs,
   ConnectionRef,
@@ -30,6 +76,7 @@ export type {
   ScalarConfig,
   ScalarOutputRef,
   ScalarRef,
+  TypedGraphQLSchema,
 } from "./types.ts";
 
 export type {

@@ -1,4 +1,4 @@
-import type { Context, Effect, Schema } from "effect";
+import type { Context, Effect, Schema, Stream } from "effect";
 import type { GraphQLResolveInfo } from "graphql";
 import type { OutputTypeRef } from "./types.ts";
 
@@ -19,6 +19,24 @@ export interface IRFieldDef {
     ctx: Context.Context<unknown>,
     info: GraphQLResolveInfo,
   ) => Effect.Effect<unknown, unknown, unknown>;
+}
+
+/**
+ * A subscription field. Like `IRFieldDef` but the resolver yields a
+ * `Stream<A, E, R>` instead of an `Effect<A, E, R>`. The lowering pipeline
+ * bridges this to graphql-js's `subscribe` AsyncIterable contract.
+ */
+export interface IRSubscriptionFieldDef {
+  readonly type: OutputTypeRef<unknown>;
+  readonly nonNull: boolean;
+  readonly description?: string;
+  readonly args: Record<string, IRArgDef>;
+  readonly subscribe: (
+    parent: unknown,
+    args: unknown,
+    ctx: Context.Context<unknown>,
+    info: GraphQLResolveInfo,
+  ) => Stream.Stream<unknown, unknown, unknown>;
 }
 
 export interface IRObjectType {
@@ -82,6 +100,16 @@ export interface IR {
   readonly nodeTypes: Map<string, IRNodeType>;
   queryFields: (() => Record<string, IRFieldDef>) | undefined;
   mutationFields: (() => Record<string, IRFieldDef>) | undefined;
+  subscriptionFields:
+    | (() => Record<string, IRSubscriptionFieldDef>)
+    | undefined;
+  /**
+   * Set by `builder.viewer(...)`. Merged into the Query type at lower-time
+   * under the fixed field name `viewer`. If the user also supplies a `viewer`
+   * field via `queryType({ fields: { viewer: ... } })`, this slot wins — the
+   * dedicated registration is the canonical path.
+   */
+  viewerField: IRFieldDef | undefined;
 }
 
 export const emptyIR = (): IR => ({
@@ -89,4 +117,6 @@ export const emptyIR = (): IR => ({
   nodeTypes: new Map(),
   queryFields: undefined,
   mutationFields: undefined,
+  subscriptionFields: undefined,
+  viewerField: undefined,
 });

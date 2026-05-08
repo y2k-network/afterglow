@@ -31,7 +31,8 @@ point in the design space:
 - **Relay is in the core, not a plugin.** `Node`, base64 global IDs, and
   `Connection` / `Edge` / `PageInfo` are produced by `builder.node()` and
   `builder.connection()` directly. The top-level `node(id:)` query is
-  always present.
+  always present. The canonical `viewer` entry point is a one-liner:
+  `builder.viewer({ type, resolve })`.
 
 ## Status
 
@@ -92,9 +93,28 @@ bun add effect-graphql graphql effect@beta
 
 ## Quick start
 
-A single file that defines a `User` node, a `users` connection on the root
-query, an Effect resolver that yields a `Database` service, a
-`ManagedRuntime` carrying that service, and an HTTP route.
+For a runnable end-to-end app see [`examples/todo.ts`](./examples/todo.ts).
+It demonstrates `builder.node` + `loadOne`, `builder.connection`,
+`builder.input`, a custom `Date` scalar via `builder.scalar`, the canonical
+Relay `viewer` query field via `builder.viewer`, server-scoped DI through
+`ManagedRuntime`, per-request `CurrentUser` via a Layer, and mounting via
+`Bun.serve()`.
+
+```bash
+bun run examples/todo.ts
+# elsewhere:
+curl -s http://localhost:4000/graphql \
+  -H 'content-type: application/json' \
+  -H 'x-user-id: ada' \
+  -d '{"query":"{ viewer { id } todos(first: 10) { edges { cursor node { title } } pageInfo { hasNextPage } } }"}'
+```
+
+A condensed walkthrough of the same pieces — defines a `User` node, registers
+the canonical Relay `viewer` query field with `builder.viewer(...)` (one line
+— `viewer` is the idiomatic Relay entry point for "current user /
+session-scoped data"), adds a `users` connection, wires an Effect resolver
+that yields a `Database` service, builds a `ManagedRuntime` carrying that
+service, and bridges to `Bun.serve()`:
 
 ```ts
 // app.ts
@@ -106,12 +126,10 @@ import {
   Schema,
 } from "effect"
 import {
-  HttpRouter,
-  HttpServer,
   HttpServerRequest,
+  HttpServerResponse,
 } from "effect/unstable/http"
-import { createBuilder } from "effect-graphql"
-import { toHttpApp } from "effect-graphql/http"
+import { createBuilder, toHttpApp } from "effect-graphql"
 
 // 1. Server-scoped service.
 class Database extends Context.Service<
@@ -163,17 +181,22 @@ const { ref: UserRef, builder: b1 } = createBuilder().node<User, Database>(
 
 const { ref: UsersConn, builder: b2 } = b1.connection(UserRef)
 
-const b3 = b2.queryType<Database | CurrentUser>({
+// 4a. Canonical Relay viewer — one line. The query field is named `viewer`
+//     (Relay convention); the type is whatever you pass (User here, but
+//     could be a synthesized Viewer/Me).
+const b3 = b2.viewer<User, Database | CurrentUser>({
+  type: UserRef,
+  resolve: () =>
+    Effect.gen(function* () {
+      const db   = yield* Database
+      const self = yield* CurrentUser
+      return yield* db.findUser(self.id)
+    }),
+})
+
+// 4b. Other root query fields go through `queryType` and merge with viewer.
+const b4 = b3.queryType<Database>({
   fields: () => ({
-    me: {
-      type: UserRef,
-      resolve: () =>
-        Effect.gen(function* () {
-          const db   = yield* Database
-          const self = yield* CurrentUser
-          return yield* db.findUser(self.id)
-        }),
-    },
     users: {
       type: UsersConn,
       nonNull: true,
@@ -210,7 +233,7 @@ const DatabaseLive = Layer.succeed(
 )
 
 const runtime = ManagedRuntime.make(DatabaseLive)
-const schema  = b3.toSchema(runtime)
+const schema  = b4.toSchema(runtime)
 
 // 6. Per-request Layer — receives HttpServerRequest, produces CurrentUser.
 const RequestLayer = Layer.effect(
@@ -222,16 +245,21 @@ const RequestLayer = Layer.effect(
   }),
 )
 
-// 7. Mount on HttpRouter.
-const GraphQLRoute = toHttpApp(schema, { context: RequestLayer })
+// 7. Build the GraphQL HTTP app and bridge it to Bun.serve.
+const app = toHttpApp<CurrentUser>(schema, { requestContext: RequestLayer })
 
-const AppLayer = Layer.mergeAll(
-  HttpRouter.layer,
-  GraphQLRoute,
-  HttpServer.layerNodeServer({ port: 4000 }),
-)
-
-await Effect.runPromise(Layer.launch(AppLayer))
+Bun.serve({
+  port: 4000,
+  async fetch(request) {
+    const req = HttpServerRequest.fromWeb(request)
+    const provided = Effect.provide(
+      app,
+      Layer.succeed(HttpServerRequest.HttpServerRequest)(req),
+    )
+    const response = await Effect.runPromise(provided)
+    return HttpServerResponse.toWeb(response)
+  },
+})
 ```
 
 Send a query:
@@ -240,8 +268,180 @@ Send a query:
 curl -s http://localhost:4000/graphql \
   -H 'content-type: application/json' \
   -H 'x-user-id: 1' \
-  -d '{"query":"{ me { name email } users(first: 10) { edges { node { name } } pageInfo { hasNextPage } } }"}'
+  -d '{"query":"{ viewer { name email } users(first: 10) { edges { node { name } } pageInfo { hasNextPage } } }"}'
 ```
+
+### GraphiQL explorer
+
+Open `http://localhost:4000/graphql` in a browser and the in-browser GraphiQL
+IDE is served from the same route via `Accept: text/html` content negotiation.
+JSON requests on the same URL execute as normal — there's no separate
+`/graphiql` path to mount.
+
+GraphiQL is on by default. To disable in production, or to customize, pass
+`graphiql` to `toHttpApp`:
+
+```ts
+toHttpApp(schema, { graphiql: false })                                  // off
+toHttpApp(schema, { graphiql: { title: "My API", defaultQuery: "{ viewer { id } }" } })
+```
+
+The page loads GraphiQL 3.x and React 18 from `unpkg.com` at request time —
+no extra dependencies are added to your project.
+
+### Persisted queries
+
+`relay-compiler --persist-output queryMap.json` emits a static
+`{ hash → queryText }` map at build time. The Relay client then sends only
+the hash on the wire, and the server allowlists by construction — only
+pre-built queries can run in production.
+
+This is strict allowlist mode: there's no Apollo APQ-style retry handshake.
+A request with no hash is either passed through (dev) or rejected
+(production), based on `required`.
+
+```ts
+import queryMap from "./queryMap.json" with { type: "json" }
+
+toHttpApp(schema, {
+  persistedQueries: {
+    store: new Map(Object.entries(queryMap)),
+    required: process.env.NODE_ENV === "production",
+  },
+})
+```
+
+Wire format. `field` defaults to `"doc_id"`, matching the Relay docs'
+network-layer example. Configure the Relay client to send the hash under
+the same key:
+
+```ts
+// relay-runtime fetchFn
+fetch(url, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ doc_id: operation.id, variables }),
+})
+```
+
+If your client uses `id` (Relay's older convention) or `documentId`, set
+`persistedQueries.field` to match.
+
+Behavior:
+
+| Request                  | `required: false` (default)        | `required: true`                  |
+|--------------------------|------------------------------------|-----------------------------------|
+| Hash hits the store      | Execute the resolved query         | Execute the resolved query        |
+| Hash misses              | 200, `PERSISTED_QUERY_NOT_FOUND`   | 200, `PERSISTED_QUERY_NOT_FOUND`  |
+| No hash, ad-hoc `query`  | Execute the ad-hoc query (dev)     | 400, `PERSISTED_QUERY_REQUIRED`   |
+
+The `store` accepts any `{ get(hash): string | undefined }` object, so you
+can plug in a Redis-backed cache, a lazy loader, or any custom lookup.
+
+### Optional BFS executor
+
+graphql-js's default executor walks the query depth-first: as soon as a parent
+resolver settles, its children are scheduled. Sibling subtrees launch their
+first resolver call at slightly different microtask ticks, which can defeat
+batching layers that depend on "everything in flight at the same time".
+
+Effect's `Request` / `RequestResolver` auto-batches every request submitted in
+the same concurrent region. So if your N+1 collapses to a single SQL call, it
+collapses *only* when all the fields in that level start in one tick.
+
+The optional BFS executor is a level-order scheduler: every field at a given
+depth runs concurrently. A level becomes the natural batching window — most
+of Grafast's N+1 collapse, without writing manual DataLoaders.
+
+```ts
+toHttpApp(schema, { executor: "bfs" })   // opt-in
+toHttpApp(schema)                        // default — graphql-js (correctness baseline)
+```
+
+This is custom executor code (vs. graphql-js's decade of bug fixes), so the
+default stays graphql-js. The BFS executor ships behind a parity test against
+the default for ~30 representative queries (scalars, lists, fragments,
+interfaces / unions, abstract types, `@skip` / `@include`, errors, variables,
+aliases). See `src/executor-bfs.parity.test.ts`.
+
+Limitations:
+
+- Subscriptions: not supported. Use the dedicated WebSocket transport
+  (`toWebSocketApp`).
+- `@defer` / `@stream`: not supported (rolled with the multipart/mixed
+  transport).
+
+You can also call it directly without the HTTP layer:
+
+```ts
+import { executeBfs } from "effect-graphql"
+
+const result = await executeBfs({ schema, document, contextValue, variableValues })
+```
+
+## Subscriptions
+
+Subscription resolvers express results as `Stream.Stream<A, E, R>`. The
+`graphql-transport-ws` subprotocol is implemented over a Bun WebSocket
+handler returned by `toWebSocketApp(schema, options)`.
+
+```ts
+import { GraphQL, createBuilder, scalars } from "effect-graphql"
+import { Effect, Stream } from "effect"
+
+const { ref: postRef, builder: b1 } = createBuilder().node<Post>("Post", { /* ... */ })
+const b2 = b1.queryType({ /* ... */ })
+const b3 = b2.subscriptionType({
+  fields: () => ({
+    // Fires every 5 seconds with a fresh value.
+    postAdded: {
+      type: postRef,
+      subscribe: () =>
+        Stream.tick("5 seconds").pipe(
+          Stream.mapEffect(() => loadLatestPost()),
+        ),
+    },
+  }),
+})
+
+const schema = b3.toSchema(runtime)
+const ws = GraphQL.toWebSocketApp(schema, {
+  // Optional: authenticate the connection. Receives `connection_init.payload`
+  // and the upgrade Request; returns the per-connection Context shared by
+  // every operation on this socket. Failure closes the socket with 4401.
+  onConnect: (payload, req) =>
+    Effect.gen(function*() {
+      const token = (payload as { token?: string }).token
+      const user = yield* verifyToken(token)
+      return Context.make(CurrentUser, user)
+    }),
+})
+
+Bun.serve({
+  port: 4000,
+  fetch(req, server) {
+    if (ws.upgrade(req, server)) return undefined
+    // Fall through to your HTTP router for /graphql POST/GET.
+    return httpHandler(req)
+  },
+  websocket: ws.websocket,
+})
+```
+
+Behavior:
+
+- Subscribes use `Stream<A, E, R>`; the framework converts to `AsyncIterable`
+  via `Stream.toReadableStreamEffect`, runs against the server runtime, and
+  pumps `next` messages for each yielded value.
+- Queries and mutations also work over the WebSocket (per spec): a single
+  `next` payload followed by `complete`.
+- Client `complete` cancels the underlying fiber via `iterator.return()`,
+  which cascades to any `Stream.ensuring(...)` cleanup.
+- Connection close cancels every in-flight subscription on that socket.
+- `ping` / `pong` heartbeats are honored.
+- Subprotocol negotiation rejects everything but `graphql-transport-ws` —
+  the legacy `subscriptions-transport-ws` is intentionally unsupported,
+  matching Relay's stance.
 
 ## Resolvers
 
@@ -383,6 +583,10 @@ them.
 - **Top-level `node(id: ID!): Node`** — decodes the global id, dispatches
   to the matching `loadOne`, and sets `__typename` on the returned object
   so graphql-js can resolve the abstract type.
+- **Top-level `nodes(ids: [ID!]!): [Node]`** — batched form of `node(id:)`.
+  Both `node(id:)` and `nodes(ids:)` are auto-added when at least one node
+  type is registered. Order is preserved; unknown ids become `null` at the
+  same index.
 - **`Connection` / `Edge`** — produced by `builder.connection(nodeRef)`.
   Field shape:
   - `Connection.edges: [Edge]!` (list non-null; entries nullable for
@@ -406,37 +610,122 @@ What is **not** included, intentionally:
 This is modern relay. If you need legacy mutation envelopes, write them
 yourself with `objectType` and `input`.
 
-## Relay 3D support
+## Mutations & Connection updates
 
-Relay's [data-driven dependencies][3d-example] (`@match` / `@module`) let the
-client load a different JS module per `__typename` at runtime. The schema's
-job is small: declare the directives so graphql-js doesn't reject queries that
-use them. The actual matching is performed by `relay-compiler` at build time.
+Relay's declarative mutation directives — `@deleteRecord`, `@deleteEdge`,
+`@appendEdge` / `@prependEdge`, `@appendNode` / `@prependNode` — keep the
+client store in sync after a mutation with no manual `updater`. They are
+client-side only, but the **shape of the mutation field's return type**
+is what the directives bind against. Get the shape wrong and the
+directive silently no-ops; the UI shows ghost rows until the next
+refetch. This is the most common Relay mutation footgun.
 
-`lower()` declares both directives by default — no opt-in needed, harmless on
-schemas that don't use 3D:
+The contracts are tiny but unforgiving:
 
-- `directive @match(key: String) on FIELD`
-- `directive @module(name: String!) on FRAGMENT_SPREAD | INLINE_FRAGMENT`
+| Directive                     | Field returns       | Extra args               |
+| ----------------------------- | ------------------- | ------------------------ |
+| `@deleteRecord`               | `ID` / `ID!`        | —                        |
+| `@deleteEdge`                 | `ID` / `[ID!]!`     | `connections: [ID!]!`    |
+| `@appendEdge` / `@prependEdge`| The Edge type       | `connections: [ID!]!`    |
+| `@appendNode` / `@prependNode`| The Node type       | `connections: [ID!]!`, `edgeTypeName: String!` |
 
-(Shape verified against [`relay-transforms`][match-constants] —
-`MATCH_CONSTANTS.match_directive_name`, `module_directive_name`, `key_arg`,
-`name_arg`.)
+Two helpers are exported to make resolver intent explicit:
 
-graphql-js's specified directives (`@skip`, `@include`, `@deprecated`,
-`@specifiedBy`) are preserved.
+```ts
+import { connectionEdge, deletedId } from "effect-graphql"
 
-A `matchable(ref)` helper is re-exported as a marker: it returns its argument
-unchanged and exists only to document that a union/interface ref is intended
-for 3D matching. Abstract-type resolution (`__typename` / `resolveType`) is
-already wired up by `lower()` for `Node`-implementing types.
+// `@deleteRecord` payload — return the deleted record's global id.
+return { deletedPostId: deletedId("Post", post.id) }
 
-To actually wire 3D end-to-end you also need `relay-compiler` configured
-client-side; see the [Relay 3D example][3d-example] for the loader scaffolding
-(`JSResource`, `MatchContainer`, etc.).
+// `@appendEdge` / `@prependEdge` payload — return an Edge, not a Node.
+return { feedbackCommentEdge: connectionEdge(comment.id, comment) }
+```
+
+Both are tiny — `deletedId` is `encodeGlobalId` under a more discoverable
+name; `connectionEdge` is `{ cursor, node }`. They exist because the
+failure mode of getting the shape wrong is silent.
+
+Two more ergonomics helpers eliminate ref boilerplate when wiring these
+mutation payloads:
+
+```ts
+import { list, scalars } from "effect-graphql"
+
+// builder.connection(NodeRef) returns a ConnectionRef whose `edgeRef` is
+// pre-built — no need to construct a NamedOutputRef by hand.
+const { ref: CommentConnRef, builder } = b0.connection(CommentRef)
+// CommentConnRef.edgeRef is the CommentEdge ref, ready to use as a field type.
+
+// list(ref, { itemNonNull: true }) builds [ID!]; nonNull: true on the field
+// wraps the whole list to [ID!]!.
+field({
+  type: list(scalars.ID, { itemNonNull: true }),
+  nonNull: true,
+  // ...
+})
+```
+
+See [`docs/RELAY_MUTATIONS.md`](./docs/RELAY_MUTATIONS.md) for the full
+server-and-client walkthrough of each directive.
+
+## Relay client directives
+
+`relay-compiler` refuses to compile any operation that uses a directive the
+server schema does not declare. Every Relay client directive is therefore
+baked into every schema produced by `lower()` — no opt-in, no flag. This is
+part of the zero-config positioning: idiomatic Relay defaults are not things
+you configure.
+
+The shipped set (verified against Relay's
+[`relay-extensions.graphql`][relay-extensions]):
+
+| Category | Directives |
+| --- | --- |
+| Error handling | `@required(action: RequiredFieldAction!)`, `@throwOnFieldError`, `@catch(to: CatchFieldTo! = RESULT)` |
+| Connection / pagination | `@connection`, `@stream_connection`, `@refetchable(queryName: String!, ...)` |
+| Fragment composition | `@inline`, `@no_inline`, `@relay`, `@alias`, `@dangerously_unaliased_fixme` |
+| Misc | `@waterfall`, `@raw_response_type`, `@updatable`, `@assignable`, `@fetchable(field_name: String)` |
+| Connection mutations | `@appendEdge`, `@prependEdge`, `@appendNode`, `@prependNode`, `@deleteEdge`, `@deleteRecord` |
+| Incremental delivery | `@defer(label: String!, if: Boolean = true)`, `@stream(label: String!, initialCount: Int!, if: Boolean = true, useCustomizedBatch: Boolean = false)` |
+| 3D | `@match(key: String)`, `@module(name: String!)` |
+
+graphql-js's `specifiedDirectives` (`@skip`, `@include`, `@deprecated`,
+`@specifiedBy`) are preserved alongside the Relay set.
+
+The runtime semantics for every directive above live in `relay-compiler` and
+the Relay client. The server's job is solely to declare them so graphql-js's
+validator accepts operations that use them. (Connection-mutation directives
+like `@appendEdge` rely on the *shape* of your mutation field's return type
+— see [Mutations & Connection updates](#mutations--connection-updates).)
+
+If you want to add your *own* directives on top, pass `extraDirectives` to
+`lower()`:
+
+```ts
+import { GraphQLDirective, DirectiveLocation } from "graphql"
+import { getIR, lower } from "effect-graphql"
+
+const myDir = new GraphQLDirective({
+  name: "my_custom",
+  locations: [DirectiveLocation.FIELD],
+})
+
+const schema = lower(getIR(builder), runtime, { extraDirectives: [myDir] })
+```
+
+The Relay set is non-negotiable. Adding `extraDirectives` does not displace
+it.
+
+A `matchable(ref)` helper is re-exported as a marker for 3D usage: it returns
+its argument unchanged and exists only to document that a union/interface ref
+is intended for `@match`. Abstract-type resolution (`__typename` /
+`resolveType`) is already wired up by `lower()` for `Node`-implementing
+types. End-to-end 3D also needs `relay-compiler` configured client-side; see
+the [Relay 3D example][3d-example] for the loader scaffolding (`JSResource`,
+`MatchContainer`, etc.).
 
 [3d-example]: https://github.com/relayjs/relay-examples/tree/main/data-driven-dependencies
-[match-constants]: https://github.com/facebook/relay/blob/main/compiler/crates/relay-transforms/src/match_/constants.rs
+[relay-extensions]: https://github.com/facebook/relay/blob/main/compiler/crates/relay-schema/src/relay-extensions.graphql
 
 ## Custom scalars
 

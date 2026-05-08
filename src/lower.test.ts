@@ -207,6 +207,64 @@ describe("lower — end-to-end", () => {
     expect(result.errors!.length).toBe(1);
   });
 
+  test("schema prints nodes(ids: [ID!]!): [Node]", () => {
+    const schema = buildEndToEndSchema();
+    const sdl = printSchema(schema);
+    expect(sdl).toMatch(/nodes\([\s\S]*ids: \[ID!\]!\s*\): \[Node\]/);
+  });
+
+  test("query { nodes(ids) { __typename ... on Post { title } } }", async () => {
+    const schema = buildEndToEndSchema();
+    const id1 = encodeGlobalId("Post", "1");
+    const id2 = encodeGlobalId("Post", "2");
+    const result = await graphql({
+      contextValue: emptyCtx,
+      schema,
+      source: `query Q($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          __typename
+          ... on Post { title }
+        }
+      }`,
+      variableValues: { ids: [id1, id2] },
+    });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({
+      nodes: [
+        { __typename: "Post", title: "First post" },
+        { __typename: "Post", title: "Second post" },
+      ],
+    });
+  });
+
+  test("nodes(ids) preserves order with mixed known/unknown typenames", async () => {
+    const schema = buildEndToEndSchema();
+    const ids = [
+      encodeGlobalId("Post", "1"),
+      encodeGlobalId("Ghost", "x"),
+      encodeGlobalId("Post", "2"),
+    ];
+    const result = await graphql({
+      contextValue: emptyCtx,
+      schema,
+      source: `query Q($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          __typename
+          ... on Post { title }
+        }
+      }`,
+      variableValues: { ids },
+    });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({
+      nodes: [
+        { __typename: "Post", title: "First post" },
+        null,
+        { __typename: "Post", title: "Second post" },
+      ],
+    });
+  });
+
   test("node(id) with unknown typename returns null gracefully", async () => {
     const schema = buildEndToEndSchema();
     const ghost = encodeGlobalId("Ghost", "x");

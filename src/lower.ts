@@ -1,4 +1,20 @@
-import type { Context, ManagedRuntime } from "effect";
+import {
+  Context as ContextNs,
+  Effect,
+  Stream,
+  type Context,
+  type ManagedRuntime,
+} from "effect";
+
+const ContextEmpty: Context.Context<never> = ContextNs.empty();
+
+function isContext(value: unknown): value is Context.Context<unknown> {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    typeof (value as { mapUnsafe?: unknown }).mapUnsafe === "object"
+  );
+}
 import {
   GraphQLBoolean,
   GraphQLEnumType,
@@ -13,6 +29,7 @@ import {
   GraphQLString,
   specifiedDirectives,
   type GraphQLArgumentConfig,
+  type GraphQLDirective,
   type GraphQLFieldConfig,
   type GraphQLFieldConfigArgumentMap,
   type GraphQLFieldConfigMap,
@@ -20,24 +37,31 @@ import {
   type GraphQLNamedType,
   type GraphQLOutputType,
 } from "graphql";
-import { relay3dDirectives } from "./relay-3d.ts";
+import { relayDirectives } from "./relay-directives.ts";
 import type {
   IR,
+  IRArgDef,
   IRConnectionType,
   IRFieldDef,
   IRInputType,
   IRNodeType,
   IRObjectType,
   IRScalarType,
+  IRSubscriptionFieldDef,
 } from "./ir.ts";
 import {
   buildConnectionTypes,
   buildNodeInterface,
   buildNodeQueryField,
+  buildNodesQueryField,
   buildPageInfoType,
   connectionArgs,
 } from "./relay.ts";
-import { wrapResolver, type WrappedResolver } from "./runtime.ts";
+import {
+  buildArgsDecoder,
+  wrapResolver,
+  type WrappedResolver,
+} from "./runtime.ts";
 import { schemaToInputType, schemaToScalar } from "./schema-bridge.ts";
 import type { OutputTypeRef } from "./types.ts";
 
@@ -50,6 +74,19 @@ const BUILTIN_SCALARS: Record<string, GraphQLOutputType> = {
 };
 
 /**
+ * Options for `lower()`.
+ *
+ * `extraDirectives` lets callers append their own custom directives to the
+ * lowered schema. The full Relay client directive set declared by
+ * `relayDirectives()` is ALWAYS included unconditionally — there is no
+ * opt-out, by design. (See `docs/RELAY_REQUIREMENTS.md` and the project's
+ * zero-config positioning.)
+ */
+export interface LowerOptions {
+  readonly extraDirectives?: ReadonlyArray<GraphQLDirective>;
+}
+
+/**
  * Lower the IR to a `GraphQLSchema`. Two passes:
  *   1) build named-type stubs (object/input/scalar/enum/connection) keyed by name
  *   2) fill in fields via thunks that resolve OutputTypeRefs against the registry
@@ -60,10 +97,11 @@ const BUILTIN_SCALARS: Record<string, GraphQLOutputType> = {
 export function lower<R, ReqR = unknown>(
   ir: IR,
   runtime: ManagedRuntime.ManagedRuntime<R, never> | null,
+  options: LowerOptions = {},
 ): GraphQLSchema {
-  if (ir.queryFields === undefined) {
+  if (ir.queryFields === undefined && ir.viewerField === undefined) {
     throw new Error(
-      "effect-graphql: at least one query field is required (call builder.queryType({ fields: () => ({...}) }))",
+      "effect-graphql: at least one query field is required (call builder.queryType({ fields: () => ({...}) }) or builder.viewer({ ... }))",
     );
   }
 
@@ -193,10 +231,30 @@ export function lower<R, ReqR = unknown>(
       args: cfg.args,
       resolve: makeNodeQueryResolver<R, ReqR>(cfg.effectResolve, runtime),
     };
+
+    const nodesCfg = buildNodesQueryField(ir.nodeTypes, nodeInterface);
+    queryFieldMap["nodes"] = {
+      type: nodesCfg.type,
+      description: nodesCfg.description,
+      args: nodesCfg.args,
+      resolve: makeNodesQueryResolver<R, ReqR>(nodesCfg.effectResolve, runtime),
+    };
   }
 
-  for (const [name, def] of Object.entries(ir.queryFields())) {
-    queryFieldMap[name] = buildFieldConfig<R, ReqR>(def, registry, runtime);
+  if (ir.queryFields !== undefined) {
+    for (const [name, def] of Object.entries(ir.queryFields())) {
+      queryFieldMap[name] = buildFieldConfig<R, ReqR>(def, registry, runtime);
+    }
+  }
+
+  // `builder.viewer(...)` is the canonical Relay viewer registration. It wins
+  // over any same-named field a user might have supplied via `queryType`.
+  if (ir.viewerField !== undefined) {
+    queryFieldMap["viewer"] = buildFieldConfig<R, ReqR>(
+      ir.viewerField,
+      registry,
+      runtime,
+    );
   }
 
   const query = new GraphQLObjectType<unknown, Context.Context<ReqR>>({
@@ -219,11 +277,35 @@ export function lower<R, ReqR = unknown>(
     });
   }
 
+  let subscription: GraphQLObjectType | undefined;
+  if (ir.subscriptionFields !== undefined) {
+    const subFieldMap: GraphQLFieldConfigMap<
+      unknown,
+      Context.Context<ReqR>
+    > = {};
+    for (const [name, def] of Object.entries(ir.subscriptionFields())) {
+      subFieldMap[name] = buildSubscriptionFieldConfig<R, ReqR>(
+        def,
+        registry,
+        runtime,
+      );
+    }
+    subscription = new GraphQLObjectType<unknown, Context.Context<ReqR>>({
+      name: "Subscription",
+      fields: () => subFieldMap,
+    });
+  }
+
   return new GraphQLSchema({
     query,
     mutation,
+    subscription,
     types: Array.from(registry.values()),
-    directives: [...specifiedDirectives, ...relay3dDirectives],
+    directives: [
+      ...specifiedDirectives,
+      ...relayDirectives(),
+      ...(options.extraDirectives ?? []),
+    ],
   });
 }
 
@@ -328,7 +410,8 @@ function resolveOutputType(
     }
     case "list": {
       const inner = resolveOutputType(ref.inner, registry, ownerName, fieldName);
-      return new GraphQLList(inner);
+      const itemType = ref.itemNonNull ? new GraphQLNonNull(inner) : inner;
+      return new GraphQLList(itemType);
     }
   }
 }
@@ -359,6 +442,175 @@ function makeNodeQueryResolver<R, ReqR>(
       effectResolve(args as { id: string }, ctx),
   };
   return wrapResolver<R, ReqR>(synthetic, { runtime });
+}
+
+function makeNodesQueryResolver<R, ReqR>(
+  effectResolve: ReturnType<typeof buildNodesQueryField>["effectResolve"],
+  runtime: ManagedRuntime.ManagedRuntime<R, never> | null,
+): WrappedResolver<ReqR> {
+  const synthetic: IRFieldDef = {
+    type: {
+      _tag: "ListOutputRef",
+      kind: "list",
+      inner: { _tag: "NamedOutputRef", kind: "named", name: "Node" },
+    } as IRFieldDef["type"],
+    nonNull: false,
+    args: {},
+    resolve: (_parent, args, ctx, _info) =>
+      effectResolve(args as { ids: ReadonlyArray<string> }, ctx),
+  };
+  return wrapResolver<R, ReqR>(synthetic, { runtime });
+}
+
+/**
+ * Lower a subscription field. Differs from regular fields:
+ *  - graphql-js's `subscribe` field returns the **source** AsyncIterable; the
+ *    field's `resolve` then maps each event to the actual response payload. We
+ *    set `resolve` to identity so the user's Stream values flow straight to the
+ *    wire.
+ *  - The bridge from `Stream<A, E, R>` → `AsyncIterable<A>` runs inside the
+ *    server runtime: `Stream.provideContext(stream, ctx)` injects the per-
+ *    request services, then `Stream.toReadableStreamEffect` is run via the
+ *    runtime to obtain a `ReadableStream`, which is iterated as an
+ *    `AsyncIterable`. Cancellation cascades: graphql-js calls
+ *    `iterator.return()`, which cancels the reader, which cleans up the Effect
+ *    fiber driving the stream.
+ */
+function buildSubscriptionFieldConfig<R, ReqR>(
+  rawDef: IRSubscriptionFieldDef,
+  registry: Map<string, GraphQLNamedType>,
+  runtime: ManagedRuntime.ManagedRuntime<R, never> | null,
+  ownerName: string = "Subscription",
+  fieldName: string = "<field>",
+): GraphQLFieldConfig<unknown, Context.Context<ReqR>> {
+  const argDefs: Record<string, IRArgDef> = rawDef.args ?? {};
+  const baseType = resolveOutputType(rawDef.type, registry, ownerName, fieldName);
+  const finalType = rawDef.nonNull ? new GraphQLNonNull(baseType) : baseType;
+
+  const args: GraphQLFieldConfigArgumentMap = {};
+  for (const [argName, argDef] of Object.entries(argDefs)) {
+    const inputType = schemaToInputType(argDef.schema, registry);
+    const a: GraphQLArgumentConfig = { type: inputType };
+    if (argDef.description !== undefined) a.description = argDef.description;
+    args[argName] = a;
+  }
+
+  const decodeArgs = buildArgsDecoder(argDefs);
+  const userSubscribe = rawDef.subscribe;
+
+  const subscribeFn = (
+    parent: unknown,
+    rawArgs: Record<string, unknown>,
+    ctx: Context.Context<ReqR>,
+    info: Parameters<
+      NonNullable<GraphQLFieldConfig<unknown, unknown>["subscribe"]>
+    >[3],
+  ): Promise<AsyncIterable<unknown>> => {
+    let decoded: Record<string, unknown>;
+    try {
+      decoded = decodeArgs(rawArgs);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+
+    let stream: Stream.Stream<unknown, unknown, unknown>;
+    try {
+      stream = userSubscribe(
+        parent,
+        decoded,
+        ctx as Context.Context<unknown>,
+        info,
+      );
+    } catch (err) {
+      return Promise.reject(err);
+    }
+
+    // Provide the per-request Context to the stream. v4: Stream.provideContext
+    // accepts a Context directly. The stream's remaining requirements should
+    // be satisfied by the server-scoped runtime. graphql-js may pass
+    // `undefined` as the context when the caller didn't supply one — coerce
+    // to `Context.empty()` so we never feed `undefined` to provideContext.
+    const safeCtx = isContext(ctx)
+      ? (ctx as Context.Context<unknown>)
+      : (ContextEmpty as Context.Context<unknown>);
+    const provided = Stream.provideContext(
+      stream,
+      safeCtx,
+    ) as Stream.Stream<unknown, unknown, R>;
+
+    const buildReadable = Stream.toReadableStreamEffect(provided);
+    const promise =
+      runtime !== null
+        ? runtime.runPromise(buildReadable)
+        : Effect.runPromise(
+            buildReadable as unknown as Effect.Effect<
+              ReadableStream<unknown>,
+              never,
+              never
+            >,
+          );
+
+    return promise.then((rs) => readableStreamAsAsyncIterable(rs));
+  };
+
+  // graphql-js calls `subscribe` to obtain the source-event AsyncIterable,
+  // then for each event runs `resolve` to produce the field's payload value.
+  // Identity is the right mapping: the user's Stream already yields the
+  // response payload type.
+  const resolve = (payload: unknown): unknown => payload;
+
+  const cfg: GraphQLFieldConfig<unknown, Context.Context<ReqR>> = {
+    type: finalType,
+    args,
+    resolve,
+    subscribe: subscribeFn as GraphQLFieldConfig<
+      unknown,
+      Context.Context<ReqR>
+    >["subscribe"],
+  };
+  if (rawDef.description !== undefined) cfg.description = rawDef.description;
+  return cfg;
+}
+
+/**
+ * Wrap a `ReadableStream` as an `AsyncIterable`. WhatWG ReadableStreams in
+ * Bun and modern browsers implement `Symbol.asyncIterator` natively; the
+ * fallback drives a reader manually for environments that don't. Calling
+ * `.return()` on the iterator cancels the reader, which propagates back to
+ * the Effect fiber feeding the stream — this is how subscription
+ * cancellation lands on the resolver.
+ */
+function readableStreamAsAsyncIterable<A>(
+  rs: ReadableStream<A>,
+): AsyncIterable<A> {
+  const native = (
+    rs as unknown as { [Symbol.asyncIterator]?: () => AsyncIterator<A> }
+  )[Symbol.asyncIterator];
+  if (typeof native === "function") {
+    return rs as unknown as AsyncIterable<A>;
+  }
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<A> {
+      const reader = rs.getReader();
+      return {
+        async next(): Promise<IteratorResult<A>> {
+          const { value, done } = await reader.read();
+          if (done) return { value: undefined as unknown as A, done: true };
+          return { value, done: false };
+        },
+        async return(): Promise<IteratorResult<A>> {
+          await reader.cancel();
+          reader.releaseLock();
+          return { value: undefined as unknown as A, done: true };
+        },
+        async throw(err): Promise<IteratorResult<A>> {
+          await reader.cancel(err);
+          reader.releaseLock();
+          throw err;
+        },
+      };
+    },
+  };
 }
 
 // Re-export for downstream tests / introspection.

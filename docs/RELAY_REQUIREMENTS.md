@@ -556,17 +556,30 @@ ids — a runtime concern downstream consumers can implement.
 Source: [Server 3D guide](https://relay.dev/docs/guides/data-driven-dependencies/server-3d/);
 [match_transform.rs](https://github.com/facebook/relay/blob/main/compiler/crates/relay-transforms/src/match_/match_transform.rs).
 
-### 3.3 `@fetchable` / `@prefer_fetchable` (typed entry points) ✗ missing
+### 3.3 `@fetchable` (typed entry points) ✓ shipped via T23
 
 What Relay expects: a `@fetchable(field_name: String)` schema directive
 that marks a type as having a custom entry point other than `node(id:)`.
 Used heavily inside Meta; less common in OSS. Compiler config
 `enableTokenField` toggles a `__token` field on these types.
 
-What breaks without it: nothing for OSS apps. We can defer indefinitely.
+**Note (corrected 2026-05-08):** `@prefer_fetchable` does NOT exist as a
+standalone directive. It is an *argument* on `@refetchable`
+(`preferFetchable: Boolean`), already shipped via T15. The
+`prefer_fetchable_in_refetch_queries` flag is a compiler-config feature
+flag, not a schema directive. Earlier listings of `@prefer_fetchable on
+FIELD_DEFINITION` were incorrect.
 
-Source: Compiler config docs;
-[Relay Compiler Configuration](https://relay.dev/docs/next/getting-started/compiler-config/).
+`@fetchable` ships with `field_name: String` (nullable) — Relay's own
+sources disagree on nullability; the permissive form validates against
+all known operations and is safer for "just declare it" goals.
+
+What breaks without it: nothing for OSS apps. Declared for completeness.
+
+Source: `relay-test-schema/src/testschema.graphql`;
+`compiler/crates/relay-transforms/src/refetchable_fragment/refetchable_directive.rs`
+(`PREFER_FETCHABLE_ARG = ArgumentName("preferFetchable")` — confirms it's
+an arg on `@refetchable`, not a separate directive).
 
 ### 3.4 Typed mutation errors via union/interface payload ✗ missing (pattern only)
 

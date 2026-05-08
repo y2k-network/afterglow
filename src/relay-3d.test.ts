@@ -71,12 +71,8 @@ describe("relay-3d directives", () => {
     const d = schema.getDirective("module");
     expect(d).not.toBeNull();
     expect(d?.name).toBe("module");
-    expect([...(d?.locations ?? [])].sort()).toEqual(
-      [
-        DirectiveLocation.FRAGMENT_SPREAD,
-        DirectiveLocation.INLINE_FRAGMENT,
-      ].sort(),
-    );
+    // Per Relay's relay-extensions.graphql, @module is FRAGMENT_SPREAD only.
+    expect(d?.locations).toEqual([DirectiveLocation.FRAGMENT_SPREAD]);
     const nameArg = d?.args.find((a) => a.name === "name");
     expect(nameArg).toBeDefined();
     // name: String! — non-null
@@ -93,20 +89,23 @@ describe("relay-3d directives", () => {
   test("validates a query that uses @match and @module against the abstract Node interface", () => {
     const schema = buildSchemaWithTwoNodes();
     // node(id: ID!): Node — Node is the abstract type. Use @match on the
-    // field and @module on the inline fragments to mimic Relay 3D usage.
+    // field and @module on FRAGMENT SPREADS (per Relay's canonical directive
+    // shape; @module is not allowed on inline fragments).
     const doc = parse(/* GraphQL */ `
       query Q($id: ID!) {
         node(id: $id) @match {
           __typename
-          ... on A @module(name: "A.js") {
-            id
-            a
-          }
-          ... on B @module(name: "B.js") {
-            id
-            b
-          }
+          ...A_data @module(name: "A.js")
+          ...B_data @module(name: "B.js")
         }
+      }
+      fragment A_data on A {
+        id
+        a
+      }
+      fragment B_data on B {
+        id
+        b
       }
     `);
     const errors = validate(schema, doc);

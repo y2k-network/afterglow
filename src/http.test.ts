@@ -59,7 +59,7 @@ function buildSchema(): GraphQLSchema {
     }),
   });
 
-  const b3 = b2.queryType<CurrentUser>({
+  const b3 = b2.queryType({
     fields: () => ({
       viewer: {
         type: userRef,
@@ -110,7 +110,12 @@ async function runRequest(
     HttpServerRequest.HttpServerRequest
   >,
   webRequest: Request,
-): Promise<{ status: number; body: unknown }> {
+): Promise<{
+  status: number;
+  body: unknown;
+  text: string;
+  contentType: string | null;
+}> {
   const req = HttpServerRequest.fromWeb(webRequest);
   const provided = Effect.provide(
     app,
@@ -119,13 +124,14 @@ async function runRequest(
   const response = await Effect.runPromise(provided);
   const web = HttpServerResponse.toWeb(response);
   const text = await web.text();
+  const contentType = web.headers.get("content-type");
   let json: unknown;
   try {
     json = text === "" ? undefined : JSON.parse(text);
   } catch {
     json = text;
   }
-  return { status: web.status, body: json };
+  return { status: web.status, body: json, text, contentType };
 }
 
 // ---- tests ------------------------------------------------------------------
@@ -270,6 +276,114 @@ describe("toHttpApp — GET", () => {
   });
 });
 
+describe("toHttpApp — GraphiQL", () => {
+  test("GET with Accept: text/html serves GraphiQL", async () => {
+    const app = toHttpApp(buildSchema());
+    const res = await runRequest(
+      app,
+      new Request("http://localhost/graphql", {
+        method: "GET",
+        headers: { accept: "text/html" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.contentType ?? "").toMatch(/^text\/html/);
+    expect(res.text).toContain('<div id="graphiql">');
+  });
+
+  test("GET with Accept: application/json falls through to query handler", async () => {
+    const app = toHttpApp(buildSchema());
+    const res = await runRequest(
+      app,
+      new Request("http://localhost/graphql", {
+        method: "GET",
+        headers: { accept: "application/json" },
+      }),
+    );
+    // No ?query=, so T7 returns 400 — the key is we did NOT serve HTML.
+    expect(res.status).toBe(400);
+    expect(res.contentType ?? "").toMatch(/application\/json/);
+  });
+
+  test("POST with Accept: text/html still executes GraphQL", async () => {
+    const app = toHttpApp(buildSchema());
+    const res = await runRequest(
+      app,
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "text/html",
+        },
+        body: JSON.stringify({ query: "{ viewer { id } }" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ data: { viewer: { id: "anon" } } });
+  });
+
+  test("graphiql: false falls through, does not serve HTML", async () => {
+    const app = toHttpApp(buildSchema(), { graphiql: false });
+    const res = await runRequest(
+      app,
+      new Request("http://localhost/graphql", {
+        method: "GET",
+        headers: { accept: "text/html" },
+      }),
+    );
+    expect(res.text).not.toContain('<div id="graphiql">');
+    // Falls through: no ?query= → 400 from the GET handler.
+    expect(res.status).toBe(400);
+  });
+
+  test("graphiql: { title } customizes the page title", async () => {
+    const app = toHttpApp(buildSchema(), {
+      graphiql: { title: "My API" },
+    });
+    const res = await runRequest(
+      app,
+      new Request("http://localhost/graphql", {
+        method: "GET",
+        headers: { accept: "text/html" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("<title>My API</title>");
+  });
+
+  test("graphiql: { defaultQuery } is embedded as JSON", async () => {
+    const app = toHttpApp(buildSchema(), {
+      graphiql: { defaultQuery: "{ viewer { id } }" },
+    });
+    const res = await runRequest(
+      app,
+      new Request("http://localhost/graphql", {
+        method: "GET",
+        headers: { accept: "text/html" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.text).toContain(
+      `defaultQuery: ${JSON.stringify("{ viewer { id } }")}`,
+    );
+  });
+
+  test("title is HTML-escaped", async () => {
+    const app = toHttpApp(buildSchema(), {
+      graphiql: { title: "<script>x</script>" },
+    });
+    const res = await runRequest(
+      app,
+      new Request("http://localhost/graphql", {
+        method: "GET",
+        headers: { accept: "text/html" },
+      }),
+    );
+    expect(res.text).not.toContain("<script>x</script>");
+    expect(res.text).toContain("&lt;script&gt;x&lt;/script&gt;");
+  });
+});
+
 describe("toHttpApp — per-request context", () => {
   test("requestContext layer derives CurrentUser from a header", async () => {
     const RequestLayer = Layer.effect(CurrentUser)(
@@ -299,5 +413,151 @@ describe("toHttpApp — per-request context", () => {
     expect(res.body).toEqual({
       data: { viewer: { id: "u:Ada", name: "Ada" } },
     });
+  });
+});
+
+describe("toHttpApp — persisted queries", () => {
+  const VIEWER_HASH = "abc123";
+  const VIEWER_QUERY = "{ viewer { id } }";
+
+  test("hit: body sends only doc_id, server resolves and executes", async () => {
+    const store = new Map([[VIEWER_HASH, VIEWER_QUERY]]);
+    const app = toHttpApp(buildSchema(), { persistedQueries: { store } });
+    const res = await runRequest(
+      app,
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc_id: VIEWER_HASH, variables: {} }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ data: { viewer: { id: "anon" } } });
+  });
+
+  test("miss: 200 with PERSISTED_QUERY_NOT_FOUND and no data", async () => {
+    const store = new Map([[VIEWER_HASH, VIEWER_QUERY]]);
+    const app = toHttpApp(buildSchema(), { persistedQueries: { store } });
+    const res = await runRequest(
+      app,
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc_id: "unknown", variables: {} }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as {
+      data?: unknown;
+      errors: Array<{
+        message: string;
+        extensions: { code: string; hash: string };
+      }>;
+    };
+    expect(body.data).toBeUndefined();
+    expect(body.errors[0]!.message).toBe("PersistedQueryNotFound");
+    expect(body.errors[0]!.extensions.code).toBe("PERSISTED_QUERY_NOT_FOUND");
+    expect(body.errors[0]!.extensions.hash).toBe("unknown");
+  });
+
+  test("required + missing hash: 400 with PERSISTED_QUERY_REQUIRED", async () => {
+    const store = new Map([[VIEWER_HASH, VIEWER_QUERY]]);
+    const app = toHttpApp(buildSchema(), {
+      persistedQueries: { store, required: true },
+    });
+    const res = await runRequest(
+      app,
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query: VIEWER_QUERY }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = res.body as {
+      errors: Array<{ message: string; extensions: { code: string } }>;
+    };
+    expect(body.errors[0]!.extensions.code).toBe("PERSISTED_QUERY_REQUIRED");
+  });
+
+  test("not required + ad-hoc query passes through", async () => {
+    const store = new Map([[VIEWER_HASH, VIEWER_QUERY]]);
+    const app = toHttpApp(buildSchema(), {
+      persistedQueries: { store, required: false },
+    });
+    const res = await runRequest(
+      app,
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query: "{ viewer { name } }" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ data: { viewer: { name: "anon" } } });
+  });
+
+  test("custom field name 'id' is honored", async () => {
+    const store = new Map([[VIEWER_HASH, VIEWER_QUERY]]);
+    const app = toHttpApp(buildSchema(), {
+      persistedQueries: { store, field: "id" },
+    });
+    const res = await runRequest(
+      app,
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: VIEWER_HASH, variables: {} }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ data: { viewer: { id: "anon" } } });
+  });
+
+  test("custom store object (non-Map) with .get works", async () => {
+    const customStore = {
+      get: (h: string) => (h === VIEWER_HASH ? VIEWER_QUERY : undefined),
+    };
+    const app = toHttpApp(buildSchema(), {
+      persistedQueries: { store: customStore },
+    });
+    const res = await runRequest(
+      app,
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc_id: VIEWER_HASH }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ data: { viewer: { id: "anon" } } });
+  });
+
+  test("no persistedQueries option: behavior unchanged", async () => {
+    const app = toHttpApp(buildSchema());
+    const res = await runRequest(
+      app,
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc_id: VIEWER_HASH, query: VIEWER_QUERY }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ data: { viewer: { id: "anon" } } });
+  });
+
+  test("GET with hash in query string resolves", async () => {
+    const store = new Map([[VIEWER_HASH, VIEWER_QUERY]]);
+    const app = toHttpApp(buildSchema(), { persistedQueries: { store } });
+    const res = await runRequest(
+      app,
+      new Request(
+        `http://localhost/graphql?doc_id=${VIEWER_HASH}`,
+        { method: "GET" },
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ data: { viewer: { id: "anon" } } });
   });
 });

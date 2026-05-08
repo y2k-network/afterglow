@@ -208,6 +208,74 @@ export function buildNodeQueryField(
   };
 }
 
+interface NodesQueryArgs {
+  readonly ids: ReadonlyArray<string>;
+}
+
+/**
+ * Resolver for the top-level `nodes(ids: [ID!]!): [Node]` field. Decodes each
+ * global ID and dispatches to the matching node type's `loadOne` in parallel.
+ * Order is preserved: `output[i]` corresponds to `input[i]`. Unknown typenames
+ * (or values that resolve to null/undefined) become `null` at the same index.
+ */
+export function nodesQueryResolver(
+  nodeTypes: Map<string, IRNodeType>,
+  args: NodesQueryArgs,
+  ctx: Context.Context<unknown>,
+): Effect.Effect<ReadonlyArray<unknown | null>, unknown, unknown> {
+  const effs: Array<Effect.Effect<unknown | null, unknown, unknown>> = args.ids.map(
+    (globalId) => {
+      const { typename, id } = decodeGlobalId(globalId);
+      const irNode = nodeTypes.get(typename);
+      if (irNode === undefined) {
+        return Effect.succeed(null);
+      }
+      return Effect.map(irNode.loadOne(id, ctx), (value) => {
+        if (value === null || value === undefined) return null;
+        if (typeof value === "object") {
+          return Object.assign(value as object, { __typename: typename });
+        }
+        return value;
+      });
+    },
+  );
+  return Effect.all(effs, { concurrency: "unbounded" });
+}
+
+export interface NodesQueryFieldConfig
+  extends GraphQLFieldConfig<unknown, unknown> {
+  readonly effectResolve: (
+    args: NodesQueryArgs,
+    ctx: Context.Context<unknown>,
+  ) => Effect.Effect<ReadonlyArray<unknown | null>, unknown, unknown>;
+}
+
+export function buildNodesQueryField(
+  nodeTypes: Map<string, IRNodeType>,
+  nodeInterface: GraphQLInterfaceType,
+): NodesQueryFieldConfig {
+  const effectResolve = (
+    args: NodesQueryArgs,
+    ctx: Context.Context<unknown>,
+  ): Effect.Effect<ReadonlyArray<unknown | null>, unknown, unknown> =>
+    nodesQueryResolver(nodeTypes, args, ctx);
+
+  return {
+    type: new GraphQLList(nodeInterface),
+    description:
+      "Fetches multiple objects given a list of globally unique IDs. Order is preserved; unknown IDs become null at the same index.",
+    args: {
+      ids: {
+        type: new GraphQLNonNull(
+          new GraphQLList(new GraphQLNonNull(GraphQLID)),
+        ),
+        description: "The list of globally unique IDs to fetch.",
+      },
+    },
+    effectResolve,
+  };
+}
+
 /**
  * Helper for `GraphQLObjectType.isTypeOf` — checks `obj.__typename === typename`.
  * The lowering pipeline attaches one of these per node concrete type so that

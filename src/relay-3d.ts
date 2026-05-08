@@ -31,22 +31,21 @@ export const matchDirective: GraphQLDirective = new GraphQLDirective({
 });
 
 /**
- * `@module(name: String!)` — applied to fragment spreads (and inline fragments)
- * inside a `@match`-ed selection. Specifies which JS module relay-compiler
- * should generate a loader for when this fragment's typename is the resolved
- * `__typename` at runtime.
+ * `@module(name: String!)` — applied to fragment spreads inside a `@match`-ed
+ * selection. Specifies which JS module relay-compiler should generate a
+ * loader for when this fragment's typename is the resolved `__typename` at
+ * runtime.
  *
- * Server-side: declaring this directive on the schema is enough.
+ * Per Relay's `relay-extensions.graphql`, `@module` is `on FRAGMENT_SPREAD`
+ * only — it does NOT apply to inline fragments. Server-side: declaring this
+ * directive on the schema is enough.
  */
 export const moduleDirective: GraphQLDirective = new GraphQLDirective({
   name: "module",
   description:
     "Specifies a JS module to load for the parent type when @match is in " +
     "effect (Relay 3D). The actual loader code is emitted by relay-compiler.",
-  locations: [
-    DirectiveLocation.FRAGMENT_SPREAD,
-    DirectiveLocation.INLINE_FRAGMENT,
-  ],
+  locations: [DirectiveLocation.FRAGMENT_SPREAD],
   args: {
     name: {
       type: new GraphQLNonNull(GraphQLString),

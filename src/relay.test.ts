@@ -14,6 +14,7 @@ import {
   buildConnectionTypes,
   buildNodeInterface,
   buildNodeQueryField,
+  buildNodesQueryField,
   buildPageInfoType,
   connectionArgs,
   decodeGlobalId,
@@ -200,6 +201,102 @@ describe("buildNodeQueryField", () => {
     const field = buildNodeQueryField(new Map(), buildNodeInterface());
     expect(() =>
       field.effectResolve({ id: "###not-base64-with-colon###" }, emptyCtx),
+    ).toThrow(InvalidGlobalIdError);
+  });
+});
+
+describe("buildNodesQueryField", () => {
+  const fakeNode = (typename: string): IRNodeType => ({
+    kind: "node",
+    name: typename,
+    interfaces: ["Node"],
+    fields: () => ({}),
+    loadOne: (id, _ctx) => Effect.succeed({ id, kind: typename }),
+  });
+
+  const emptyCtx = Context.empty() as unknown as Context.Context<unknown>;
+
+  test("exposes a non-null list of non-null IDs and returns a list of Node", () => {
+    const nodeIface = buildNodeInterface();
+    const field = buildNodesQueryField(new Map(), nodeIface);
+    const t = field.type as GraphQLList<typeof nodeIface>;
+    expect(t).toBeInstanceOf(GraphQLList);
+    expect(t.ofType).toBe(nodeIface);
+
+    const idsArg = (field.args as Record<string, { type: unknown }>).ids!;
+    const idsType = idsArg.type as GraphQLNonNull<GraphQLList<GraphQLNonNull<typeof GraphQLID>>>;
+    expect(idsType).toBeInstanceOf(GraphQLNonNull);
+    const inner = idsType.ofType as GraphQLList<GraphQLNonNull<typeof GraphQLID>>;
+    expect(inner).toBeInstanceOf(GraphQLList);
+    expect(inner.ofType).toBeInstanceOf(GraphQLNonNull);
+    expect((inner.ofType as GraphQLNonNull<typeof GraphQLID>).ofType).toBe(GraphQLID);
+  });
+
+  test("returns an array of the same length as input", async () => {
+    const nodeTypes = new Map<string, IRNodeType>([["Post", fakeNode("Post")]]);
+    const field = buildNodesQueryField(nodeTypes, buildNodeInterface());
+    const eff = field.effectResolve(
+      {
+        ids: [
+          encodeGlobalId("Post", "1"),
+          encodeGlobalId("Post", "2"),
+          encodeGlobalId("Post", "3"),
+        ],
+      },
+      emptyCtx,
+    );
+    const result = (await Effect.runPromise(
+      eff as Effect.Effect<ReadonlyArray<unknown>, unknown, never>,
+    )) as ReadonlyArray<{ id: string; __typename: string }>;
+    expect(result).toHaveLength(3);
+    expect(result[0]!.id).toBe("1");
+    expect(result[1]!.id).toBe("2");
+    expect(result[2]!.id).toBe("3");
+  });
+
+  test("returns null at positions for unknown typenames; preserves order", async () => {
+    const nodeTypes = new Map<string, IRNodeType>([
+      ["User", fakeNode("User")],
+      ["Post", fakeNode("Post")],
+    ]);
+    const field = buildNodesQueryField(nodeTypes, buildNodeInterface());
+    const eff = field.effectResolve(
+      {
+        ids: [
+          encodeGlobalId("Post", "10"),
+          encodeGlobalId("Ghost", "x"),
+          encodeGlobalId("User", "u1"),
+          encodeGlobalId("Ghost", "y"),
+        ],
+      },
+      emptyCtx,
+    );
+    const result = (await Effect.runPromise(
+      eff as Effect.Effect<ReadonlyArray<unknown | null>, unknown, never>,
+    )) as ReadonlyArray<{ id: string; __typename: string } | null>;
+    expect(result).toHaveLength(4);
+    expect(result[0]!).toMatchObject({ id: "10", __typename: "Post" });
+    expect(result[1]).toBeNull();
+    expect(result[2]!).toMatchObject({ id: "u1", __typename: "User" });
+    expect(result[3]).toBeNull();
+  });
+
+  test("empty input yields empty output", async () => {
+    const field = buildNodesQueryField(new Map(), buildNodeInterface());
+    const eff = field.effectResolve({ ids: [] }, emptyCtx);
+    const result = await Effect.runPromise(
+      eff as Effect.Effect<ReadonlyArray<unknown>, unknown, never>,
+    );
+    expect(result).toEqual([]);
+  });
+
+  test("propagates InvalidGlobalIdError synchronously when any id is malformed", () => {
+    const field = buildNodesQueryField(new Map(), buildNodeInterface());
+    expect(() =>
+      field.effectResolve(
+        { ids: ["###not-base64-with-colon###"] },
+        emptyCtx,
+      ),
     ).toThrow(InvalidGlobalIdError);
   });
 });
