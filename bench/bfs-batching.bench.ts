@@ -218,6 +218,5 @@ if (import.meta.main) {
       stats: r.stats,
     })),
   };
-  agg.timestamp = new Date().toISOString();
   saveResults(agg);
 }

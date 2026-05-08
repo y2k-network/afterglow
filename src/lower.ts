@@ -56,6 +56,8 @@ import {
 } from "./relay.ts";
 import { schemaToInputType, schemaToScalar } from "./schema-bridge.ts";
 import { standardScalarTypes } from "./standard-scalars.ts";
+
+const CONNECTION_ARGS = connectionArgs();
 import type {
   IR,
   IRArgDef,
@@ -360,8 +362,7 @@ function buildFieldConfig<R, ReqR>(
   }
 
   if (isConnectionOutput(def.type, registry)) {
-    const ca = connectionArgs();
-    for (const [k, v] of Object.entries(ca)) {
+    for (const [k, v] of Object.entries(CONNECTION_ARGS)) {
       if (!(k in args)) args[k] = v;
     }
   }
@@ -531,9 +532,8 @@ function isConnectionOutput(
   registry: Map<string, GraphQLNamedType>,
 ): boolean {
   if (ref.kind !== "named") return false;
-  const t = registry.get(ref.name);
-  if (!(t instanceof GraphQLObjectType)) return false;
-  return ref.name.endsWith("Connection");
+  if (!ref.name.endsWith("Connection")) return false;
+  return registry.get(ref.name) instanceof GraphQLObjectType;
 }
 
 function makeNodeQueryResolver<R, ReqR>(

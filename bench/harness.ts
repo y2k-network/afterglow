@@ -58,11 +58,10 @@ const toResult = (
     p75: number; p99: number; samples: number[]; ticks: number;
   },
 ): BenchResult => {
-  const p50 = s.p50;
   return {
     name,
-    opsPerSec: NS_PER_S / p50,
-    msPerOp: p50 / NS_PER_MS,
+    opsPerSec: NS_PER_S / s.p50,
+    msPerOp: s.p50 / NS_PER_MS,
     stats: {
       min: s.min,
       max: s.max,
@@ -144,8 +143,8 @@ export interface AggregatedResults {
     readonly cpu: string | null;
   };
   readonly harness: string;
-  timestamp: string;
-  readonly results: Record<string, unknown>;
+  readonly timestamp: string;
+  readonly results: { [k: string]: unknown };
 }
 
 const RESULTS_PATH = `${import.meta.dir}/results.json`;
@@ -169,7 +168,8 @@ export const loadResults = (): AggregatedResults => {
 };
 
 export const saveResults = (agg: AggregatedResults): void => {
-  writeFileSync(RESULTS_PATH, JSON.stringify(agg, null, 2));
+  const stamped: AggregatedResults = { ...agg, timestamp: new Date().toISOString() };
+  writeFileSync(RESULTS_PATH, JSON.stringify(stamped, null, 2));
 };
 
 export const hardwareInfo = () => {

@@ -128,6 +128,5 @@ if (import.meta.main) {
     rssLastMb: last.rssMb,
     totalEvents: last.received,
   };
-  agg.timestamp = new Date().toISOString();
   saveResults(agg);
 }

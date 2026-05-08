@@ -212,6 +212,5 @@ if (import.meta.main) {
     msPerOp: r.msPerOp,
     stats: r.stats,
   }));
-  agg.timestamp = new Date().toISOString();
   saveResults(agg);
 }

@@ -25,7 +25,7 @@ export {
 
 export { buildSchema, toHttpApp, type ToHttpAppOptions } from "./http.ts";
 export { lintSchema, type LintIssue } from "./lint.ts";
-export { printSchemaWithDirectives } from "./print-sdl.ts";
+export { printSchemaWithDirectives, type PrintSchemaOptions } from "./print-sdl.ts";
 export { toWebSocketApp, type ToWebSocketAppOptions, type ToWebSocketAppResult } from "./ws.ts";
 
 export type {

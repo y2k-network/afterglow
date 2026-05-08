@@ -63,8 +63,10 @@ for (const entry of current.results) {
   }
 }
 
+const thresholdPct = (REGRESSION_THRESHOLD * 100).toFixed(0);
+
 if (regressions.length === 0) {
-  console.log("check-bench-regression: no regressions over 10%.");
+  console.log(`check-bench-regression: no regressions over ${thresholdPct}%.`);
   process.exit(0);
 }
 

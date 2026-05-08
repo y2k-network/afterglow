@@ -94,6 +94,5 @@ if (import.meta.main) {
     medianMs: r.medianMs,
     samplesMs: r.samplesMs,
   }));
-  agg.timestamp = new Date().toISOString();
   saveResults(agg);
 }
