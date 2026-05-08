@@ -20,7 +20,7 @@ tiny but unforgiving:
 | `@appendNode` / `@prependNode`| The Node type       | `connections: [ID!]!`, `edgeTypeName: String!` |
 
 Server resolvers should return values whose shapes match the row in the
-table. effect-graphql ships two helpers — `connectionEdge` and
+table. @athanor/alembic ships two helpers — `connectionEdge` and
 `deletedId` — to make resolver intent explicit. Neither is required; both
 exist because the failure mode of getting the shape wrong is silent.
 
@@ -41,7 +41,7 @@ that id loses the matching edge automatically.
 
 ```ts
 import { Effect, Schema } from "effect"
-import { createBuilder, deletedId, scalars } from "effect-graphql"
+import { createBuilder, deletedId, scalars } from "@athanor/alembic"
 
 type Post = { id: string; title: string }
 
@@ -122,7 +122,7 @@ is gone.
 
 ```ts
 import { Effect, Schema } from "effect"
-import { deletedId, list, scalars } from "effect-graphql"
+import { deletedId, list, scalars } from "@athanor/alembic"
 
 const { ref: DeleteCommentsPayload, builder: b1 } = b0.objectType<{
   deletedCommentIds: ReadonlyArray<string>
@@ -206,7 +206,7 @@ type CreateCommentPayload {
 
 ```ts
 import { Effect, Schema } from "effect"
-import { connectionEdge, scalars } from "effect-graphql"
+import { connectionEdge, scalars } from "@athanor/alembic"
 
 type Comment = { id: string; body: string }
 
@@ -355,7 +355,7 @@ it generalizes if the edge later grows fields.
 
 ---
 
-## How effect-graphql produces edge types
+## How @athanor/alembic produces edge types
 
 `builder.connection(NodeRef)` produces both the `Connection` and `Edge`
 types and registers them. The edge type's name is `${NodeName}Edge`
@@ -376,7 +376,7 @@ them before sending the operation. But relay-compiler **does** require
 the directives to be declared in the schema so client documents that
 use them parse cleanly. Shipping those declarations is a separate task
 (see #15) — once it lands, you can use `@appendEdge` etc. against an
-effect-graphql schema with no manual `schemaExtensions` wiring.
+@athanor/alembic schema with no manual `schemaExtensions` wiring.
 
 ---
 

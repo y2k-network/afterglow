@@ -11,7 +11,7 @@
  * Argument validation runs synchronously through `Schema.decodeUnknownSync`.
  * Schemas requiring `DecodingServices` are rejected at build time via the
  * AST walk in `assertSyncDecodable` (verbatim from v1 — services don't change
- * across major versions of effect-graphql).
+ * across major versions of @athanor/alembic).
  */
 import { Cause, Effect, Exit, Option, Schema } from "effect";
 import type { Context, ManagedRuntime, SchemaAST } from "effect";
@@ -135,7 +135,7 @@ function checkGetter(argName: string, getter: { readonly run: GetterRun }): void
     effect = getter.run(Option.some(undefined as unknown), {});
   } catch (err) {
     throw new Error(
-      `effect-graphql: arg "${argName}" schema decoder threw synchronously during build-time check: ${stringifyError(err)}`,
+      `@athanor/alembic: arg "${argName}" schema decoder threw synchronously during build-time check: ${stringifyError(err)}`,
     );
   }
 
@@ -144,7 +144,7 @@ function checkGetter(argName: string, getter: { readonly run: GetterRun }): void
     exit = Effect.runSyncExit(effect as Effect.Effect<unknown, unknown, never>);
   } catch (err) {
     throw new Error(
-      `effect-graphql: arg "${argName}" schema is not sync-decodable: ${stringifyError(err)}`,
+      `@athanor/alembic: arg "${argName}" schema is not sync-decodable: ${stringifyError(err)}`,
     );
   }
 
@@ -154,7 +154,7 @@ function checkGetter(argName: string, getter: { readonly run: GetterRun }): void
         const msg = errorMessage(reason.defect);
         if (msg.includes("Service not found")) {
           throw new Error(
-            `effect-graphql: arg "${argName}" schema requires Effect services for decoding (${msg}). Arg schemas must be sync-decodable (DecodingServices = never).`,
+            `@athanor/alembic: arg "${argName}" schema requires Effect services for decoding (${msg}). Arg schemas must be sync-decodable (DecodingServices = never).`,
           );
         }
       }

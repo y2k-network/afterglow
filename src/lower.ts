@@ -97,7 +97,7 @@ export function lower<R, ReqR = unknown>(
   const hasQueryFields = Object.keys(ir.queryFields).length > 0;
   if (!hasNodes && !hasQueryFields && !hasViewer) {
     throw new Error(
-      "effect-graphql: at least one query field is required (call GraphQL.Query.layer({ ... }) or register GraphQL.Viewer.layer({ ... }))",
+      "@athanor/alembic: at least one query field is required (call GraphQL.Query.layer({ ... }) or register GraphQL.Viewer.layer({ ... }))",
     );
   }
 
@@ -166,17 +166,17 @@ export function lower<R, ReqR = unknown>(
     const nodeType = registry.get(conn.nodeTypeName);
     if (!nodeType) {
       throw new Error(
-        `effect-graphql: connection "${conn.name}" references unknown node type "${conn.nodeTypeName}"`,
+        `@athanor/alembic: connection "${conn.name}" references unknown node type "${conn.nodeTypeName}"`,
       );
     }
     if (!(nodeType instanceof GraphQLObjectType)) {
       throw new Error(
-        `effect-graphql: connection "${conn.name}" expected node type "${conn.nodeTypeName}" to be a GraphQLObjectType`,
+        `@athanor/alembic: connection "${conn.name}" expected node type "${conn.nodeTypeName}" to be a GraphQLObjectType`,
       );
     }
     if (!pageInfoType) {
       throw new Error(
-        "effect-graphql: internal — PageInfo not initialized despite connection types being present",
+        "@athanor/alembic: internal — PageInfo not initialized despite connection types being present",
       );
     }
     const { connection, edge } = buildConnectionTypes(
@@ -193,7 +193,7 @@ export function lower<R, ReqR = unknown>(
     const inputType = schemaToInputType(input.schema, registry);
     if (!(inputType instanceof GraphQLInputObjectType)) {
       throw new Error(
-        `effect-graphql: input "${input.name}" did not resolve to a GraphQLInputObjectType`,
+        `@athanor/alembic: input "${input.name}" did not resolve to a GraphQLInputObjectType`,
       );
     }
   }
@@ -456,7 +456,7 @@ function missingTypeError(
   if (typeName.endsWith("Connection")) {
     const nodeName = typeName.slice(0, -"Connection".length);
     return (
-      `effect-graphql: ${fieldRef} returns type "${typeName}" but no connection type for ${nodeName} is registered. ` +
+      `@athanor/alembic: ${fieldRef} returns type "${typeName}" but no connection type for ${nodeName} is registered. ` +
       `Use \`GraphQL.Connection(${nodeName})\` as the field type — \`queryField(GraphQL.Connection(${nodeName}), { resolve: ... })\` — ` +
       `or add \`GraphQL.Connection.layer(${nodeName})\` to your SchemaLayer's \`Layer.mergeAll(...)\`.`
     );
@@ -464,7 +464,7 @@ function missingTypeError(
   if (typeName.endsWith("Edge")) {
     const nodeName = typeName.slice(0, -"Edge".length);
     return (
-      `effect-graphql: ${fieldRef} returns edge type "${typeName}" but no connection for ${nodeName} is registered. ` +
+      `@athanor/alembic: ${fieldRef} returns edge type "${typeName}" but no connection for ${nodeName} is registered. ` +
       `Add \`GraphQL.Connection.layer(${nodeName})\` to your SchemaLayer.`
     );
   }
@@ -472,7 +472,7 @@ function missingTypeError(
   // Generic missing-type fallback. Most likely the user forgot to add the
   // node/object's `*.layer` to their merge.
   return (
-    `effect-graphql: ${fieldRef} references type "${typeName}" but it's not registered. ` +
+    `@athanor/alembic: ${fieldRef} references type "${typeName}" but it's not registered. ` +
     `Add the layer that defines ${typeName} (\`GraphQL.Node.layer(${typeName})({...})\` or similar) ` +
     `to your SchemaLayer's \`Layer.mergeAll(...)\`.`
   );

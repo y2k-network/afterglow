@@ -274,7 +274,7 @@ const outputTypeToIR = (t: FieldOutputType | ConnectionType<unknown>): IROutputT
     const name = (t as { identifier?: unknown }).identifier;
     if (typeof name !== "string") {
       throw new Error(
-        "effect-graphql: cannot derive a GraphQL type name from this constructor — expected a Schema.Class.",
+        "@athanor/alembic: cannot derive a GraphQL type name from this constructor — expected a Schema.Class.",
       );
     }
     return { kind: "named", name };
@@ -299,12 +299,12 @@ const outputTypeToIR = (t: FieldOutputType | ConnectionType<unknown>): IROutputT
           return { kind: "scalar", name: id };
         }
         throw new Error(
-          `effect-graphql: cannot map Schema AST "${ast._tag}" to a GraphQL output type without an \`identifier\` annotation.`,
+          `@athanor/alembic: cannot map Schema AST "${ast._tag}" to a GraphQL output type without an \`identifier\` annotation.`,
         );
       }
     }
   }
-  throw new Error("effect-graphql: unsupported field output type");
+  throw new Error("@athanor/alembic: unsupported field output type");
 };
 
 // ---------------------------------------------------------------------------
@@ -320,7 +320,7 @@ const classToInputSchema = (cls: unknown): Schema.Top => {
   // Fallback — already a Schema.Top of some shape (e.g. a plain Struct).
   if ((cls as { ast?: unknown }).ast !== undefined) return cls as Schema.Top;
   throw new Error(
-    "effect-graphql: mutationField input must be a Schema.Class or a named Schema.Struct.",
+    "@athanor/alembic: mutationField input must be a Schema.Class or a named Schema.Struct.",
   );
 };
 
@@ -328,7 +328,7 @@ const classIdentifier = (cls: SchemaClass<unknown>): string => {
   const name = (cls as { identifier?: unknown }).identifier;
   if (typeof name !== "string") {
     throw new Error(
-      "effect-graphql: GraphQL.Node.layer / Connection.layer require a Schema.Class — `(cls as any).identifier` was not a string.",
+      "@athanor/alembic: GraphQL.Node.layer / Connection.layer require a Schema.Class — `(cls as any).identifier` was not a string.",
     );
   }
   return name;
@@ -409,7 +409,7 @@ const compileFieldEntry = (
     };
   }
   throw new Error(
-    `effect-graphql: field "${parentName}.${fieldName}" — value is not a recognized field shape (expected Schema.Top, GraphQL.field(...), Schema.Class, ScalarType, or GraphQL.ID).`,
+    `@athanor/alembic: field "${parentName}.${fieldName}" — value is not a recognized field shape (expected Schema.Top, GraphQL.field(...), Schema.Class, ScalarType, or GraphQL.ID).`,
   );
 };
 
@@ -950,7 +950,7 @@ export const Query = {
           const raw = readRoot(def, RAW_QF_KEY);
           if (!raw) {
             throw new Error(
-              `effect-graphql: GraphQL.Query.layer field "${name}" must be created via GraphQL.queryField(...)`,
+              `@athanor/alembic: GraphQL.Query.layer field "${name}" must be created via GraphQL.queryField(...)`,
             );
           }
           out[name] = compileRootField(name, raw);
@@ -973,7 +973,7 @@ export const Mutation = {
           const raw = readRoot(def, RAW_MF_KEY);
           if (!raw) {
             throw new Error(
-              `effect-graphql: GraphQL.Mutation.layer field "${name}" must be created via GraphQL.mutationField(...)`,
+              `@athanor/alembic: GraphQL.Mutation.layer field "${name}" must be created via GraphQL.mutationField(...)`,
             );
           }
           out[name] = compileRootField(name, raw);
@@ -996,7 +996,7 @@ export const Subscription = {
           const raw = readSub(def);
           if (!raw) {
             throw new Error(
-              `effect-graphql: GraphQL.Subscription.layer field "${name}" must be created via GraphQL.subscriptionField(...)`,
+              `@athanor/alembic: GraphQL.Subscription.layer field "${name}" must be created via GraphQL.subscriptionField(...)`,
             );
           }
           out[name] = compileSubField(raw);

@@ -1,5 +1,5 @@
 /**
- * Standard custom scalars baked into every effect-graphql schema.
+ * Standard custom scalars baked into every @athanor/alembic schema.
  *
  * Per the project's zero-config Relay positioning, these scalars are
  * registered automatically by `lower()` regardless of whether any user

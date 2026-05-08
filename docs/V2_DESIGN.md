@@ -1,4 +1,4 @@
-# effect-graphql v2 Design: Effect-Native API
+# @athanor/alembic v2 Design: Effect-Native API
 
 > Status: Design exploration. No implementation yet.
 > Revision 2: Added Effect v4 source citations (all APIs verified against
@@ -42,7 +42,7 @@ Field resolvers live as static methods. The class carries its own loader.
 
 ```typescript
 import { Context, Effect, Layer, Schema, Stream } from "effect"
-import { GraphQL } from "effect-graphql"
+import { GraphQL } from "@athanor/alembic"
 
 // -- Custom scalar -----------------------------------------------------------
 
@@ -178,7 +178,7 @@ that return Layers. This split is exactly what makes HttpApi composable.
 
 ```typescript
 import { Context, Effect, Layer, Schema, Stream } from "effect"
-import { GraphQL } from "effect-graphql"
+import { GraphQL } from "@athanor/alembic"
 
 // -- Types (pure Schema, no resolvers attached) ------------------------------
 
@@ -281,7 +281,7 @@ provide the resolvers. Layer.mergeAll assembles the schema."
 
 ```typescript
 import { Context, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect"
-import { GraphQL } from "effect-graphql"
+import { GraphQL } from "@athanor/alembic"
 
 // ── Custom scalar ─────────────────────────────────────────────────────────────
 
@@ -780,7 +780,7 @@ import {
   Context, Effect, Layer, ManagedRuntime, Ref, Schema, Stream,
 } from "effect"
 import { HttpServerRequest } from "effect/unstable/http"
-import { GraphQL } from "effect-graphql"
+import { GraphQL } from "@athanor/alembic"
 
 // ── Scalars ───────────────────────────────────────────────────────────────────
 
@@ -966,7 +966,7 @@ const main = async () => {
     },
   })
 
-  console.log(`effect-graphql v2 example listening on ${server.url}`)
+  console.log(`@athanor/alembic v2 example listening on ${server.url}`)
 
   const shutdown = async () => { server.stop(); await runtime.dispose(); process.exit(0) }
   process.on("SIGINT", shutdown)

@@ -93,7 +93,7 @@ export interface IRNodeFragment {
  * (`type Viewer { ... }`, no `implements Node`).
  *
  * Mirrors Effect's `HttpApi` framework-owned-container pattern: the type name
- * and shape (Viewer + Query.viewer) belong to effect-graphql; users compose
+ * and shape (Viewer + Query.viewer) belong to @athanor/alembic; users compose
  * fields and a parent-resolver into it via this single canonical surface.
  */
 export interface IRViewerFragment {
@@ -216,7 +216,7 @@ export const addFragment = (ir: IR, fragment: IRFragment): void => {
     case "viewer":
       if (ir.viewer !== null) {
         throw new Error(
-          "effect-graphql: GraphQL.Viewer.layer was registered twice. Only one viewer is allowed per schema.",
+          "@athanor/alembic: GraphQL.Viewer.layer was registered twice. Only one viewer is allowed per schema.",
         );
       }
       ir.viewer = fragment;

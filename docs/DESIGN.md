@@ -1,4 +1,4 @@
-# effect-graphql v1 Design Document
+# @athanor/alembic v1 Design Document
 
 ## Overview
 
@@ -847,7 +847,7 @@ handler, so `HttpRouter.add` reports no extra `Requires` to the router.
 User-facing API:
 
 ```ts
-import { GraphQL } from "effect-graphql"
+import { GraphQL } from "@athanor/alembic"
 import { Layer, Effect } from "effect"
 import { HttpRouter, HttpServerRequest } from "effect/unstable/http"
 

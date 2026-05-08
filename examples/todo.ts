@@ -307,7 +307,7 @@ const main = async () => {
   });
 
   // eslint-disable-next-line no-console
-  console.log(`effect-graphql todo example listening on ${server.url}`);
+  console.log(`@athanor/alembic todo example listening on ${server.url}`);
 
   const shutdown = async () => {
     server.stop();

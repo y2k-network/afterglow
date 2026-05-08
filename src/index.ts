@@ -1,18 +1,18 @@
 /**
- * Public surface for `effect-graphql` — the Layer-driven API.
+ * Public surface for `@athanor/alembic` — the Layer-driven API.
  *
  * Two equally valid import styles:
  *
  * ```ts
  * // Namespace style (matches Effect's `Layer.mergeAll`, `Effect.gen` shape):
- * import { GraphQL } from "effect-graphql"
+ * import { GraphQL } from "@athanor/alembic"
  *
  * GraphQL.Node.layer(User)({ load: ..., viewer: ... })
  * GraphQL.Query.layer({ todos: GraphQL.queryField(...) })
  * GraphQL.toHttpApp(SchemaLayer, { runtime, requestContext })
  *
  * // Or named imports:
- * import { Node, Query, queryField, toHttpApp } from "effect-graphql"
+ * import { Node, Query, queryField, toHttpApp } from "@athanor/alembic"
  * ```
  */
 import { Schema } from "effect";

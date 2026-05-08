@@ -107,7 +107,7 @@ interface ParsedRequest {
  * Mounting:
  *
  * ```ts
- * import { GraphQL } from "effect-graphql"
+ * import { GraphQL } from "@athanor/alembic"
  * import { HttpRouter } from "effect/unstable/http"
  *
  * const app = GraphQL.toHttpApp(schema, { requestContext: MyLayer })

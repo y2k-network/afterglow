@@ -1,11 +1,11 @@
-# Relay Client Requirements for effect-graphql Servers
+# Relay Client Requirements for @athanor/alembic Servers
 
 > Research date: 2026-05-08. Sources verified against current relay.dev docs and
 > facebook/relay `main` branch. Items marked "uncertain" need follow-up.
 
 ## Summary
 
-effect-graphql already covers the structural core that relay-compiler will not
+@athanor/alembic already covers the structural core that relay-compiler will not
 compile without: a `Node` interface with non-null `id: ID!`, a `node(id: ID!)`
 root field, and Cursor Connections (Connection/Edge/PageInfo with the
 canonical field names and nullability). T13 (persisted queries) and T11
@@ -365,7 +365,7 @@ Source: [@required Directive](https://relay.dev/docs/guides/required-directive/)
 What Relay expects: relay-compiler tolerates these on the client side but
 the **schema must declare them** to type-check client documents.
 
-The canonical set (current as of relay 19+) that effect-graphql should
+The canonical set (current as of relay 19+) that @athanor/alembic should
 ship as schema extensions out of the box:
 ```graphql
 directive @connection(key: String!, filters: [String], handler: String, dynamicKey_UNSTABLE: String) on FIELD

@@ -76,7 +76,7 @@ function literalValueOf(node: ValueNode): unknown {
     }
     default:
       throw new Error(
-        `effect-graphql: cannot extract literal from value node of kind "${node.kind}"`,
+        `@athanor/alembic: cannot extract literal from value node of kind "${node.kind}"`,
       );
   }
 }
@@ -116,7 +116,7 @@ function astToInputType(
 
     default:
       throw new Error(
-        `effect-graphql: schema-bridge does not support AST node "${ast._tag}" in input position`,
+        `@athanor/alembic: schema-bridge does not support AST node "${ast._tag}" in input position`,
       );
   }
 }
@@ -128,7 +128,7 @@ function literalToInputType(
   const v = ast.literal;
   if (typeof v !== "string") {
     throw new Error(
-      `effect-graphql: only string Schema.Literal values map to GraphQL (got ${typeof v}: ${String(v)})`,
+      `@athanor/alembic: only string Schema.Literal values map to GraphQL (got ${typeof v}: ${String(v)})`,
     );
   }
   // A bare 1-value literal becomes a single-value enum. Naming is awkward
@@ -139,7 +139,7 @@ function literalToInputType(
   if (cached) {
     if (!(cached instanceof GraphQLEnumType)) {
       throw new Error(
-        `effect-graphql: type registry name collision for "${id}" (existing type is not an enum)`,
+        `@athanor/alembic: type registry name collision for "${id}" (existing type is not an enum)`,
       );
     }
     return cached;
@@ -175,7 +175,7 @@ function unionToInputType(
 
   // Anything else is a true input union — banned by GraphQL.
   throw new Error(
-    "effect-graphql: GraphQL has no input union type. Use a discriminated struct, a string-literal union, or split this into separate fields.",
+    "@athanor/alembic: GraphQL has no input union type. Use a discriminated struct, a string-literal union, or split this into separate fields.",
   );
 }
 
@@ -187,7 +187,7 @@ function literalUnionToEnum(
   const id = identifierOf(ast);
   if (!id) {
     throw new Error(
-      `effect-graphql: string-literal union must carry an identifier annotation (use schema.annotate({ identifier: "MyEnum" })) so it has a stable GraphQL name. Members: ${members
+      `@athanor/alembic: string-literal union must carry an identifier annotation (use schema.annotate({ identifier: "MyEnum" })) so it has a stable GraphQL name. Members: ${members
         .map((m) => JSON.stringify(m.literal))
         .join(", ")}`,
     );
@@ -196,7 +196,7 @@ function literalUnionToEnum(
   if (cached) {
     if (!(cached instanceof GraphQLEnumType)) {
       throw new Error(
-        `effect-graphql: type registry name collision for "${id}" (existing type is not an enum)`,
+        `@athanor/alembic: type registry name collision for "${id}" (existing type is not an enum)`,
       );
     }
     return cached;
@@ -218,14 +218,14 @@ function objectsToInputType(
   const id = identifierOf(ast);
   if (!id) {
     throw new Error(
-      "effect-graphql: input struct schemas must carry an identifier annotation (use schema.annotate({ identifier: \"MyInput\" }) or pass the schema to builder.input(name, schema)).",
+      "@athanor/alembic: input struct schemas must carry an identifier annotation (use schema.annotate({ identifier: \"MyInput\" }) or pass the schema to builder.input(name, schema)).",
     );
   }
   const cached = registry.get(id);
   if (cached) {
     if (!(cached instanceof GraphQLInputObjectType)) {
       throw new Error(
-        `effect-graphql: type registry name collision for "${id}" (existing type is not an input object)`,
+        `@athanor/alembic: type registry name collision for "${id}" (existing type is not an input object)`,
       );
     }
     return cached;
@@ -268,7 +268,7 @@ function suspendToInputType(
     if (existing) {
       if (!(existing instanceof GraphQLInputObjectType)) {
         throw new Error(
-          `effect-graphql: type registry name collision for "${id}" (existing type is not an input object)`,
+          `@athanor/alembic: type registry name collision for "${id}" (existing type is not an input object)`,
         );
       }
       return existing;
@@ -279,7 +279,7 @@ function suspendToInputType(
         const inner = ast.thunk();
         if (inner._tag !== "Objects") {
           throw new Error(
-            `effect-graphql: Schema.suspend used as an input type must resolve to a Schema.Struct (got "${inner._tag}")`,
+            `@athanor/alembic: Schema.suspend used as an input type must resolve to a Schema.Struct (got "${inner._tag}")`,
           );
         }
         const fields: Record<string, GraphQLInputFieldConfig> = {};
@@ -310,7 +310,7 @@ function arraysToInputType(
   const inner =
     ast.rest.length > 0 ? ast.rest[0]! : ast.elements.length > 0 ? ast.elements[0]! : undefined;
   if (!inner) {
-    throw new Error("effect-graphql: empty array schema cannot be mapped to a GraphQL list type");
+    throw new Error("@athanor/alembic: empty array schema cannot be mapped to a GraphQL list type");
   }
   return new GraphQLList(astToInputType(inner, registry));
 }
@@ -322,14 +322,14 @@ function enumToInputType(
   const id = identifierOf(ast);
   if (!id) {
     throw new Error(
-      "effect-graphql: Schema.Enums(...) must carry an identifier annotation to map to a GraphQL enum",
+      "@athanor/alembic: Schema.Enums(...) must carry an identifier annotation to map to a GraphQL enum",
     );
   }
   const cached = registry.get(id);
   if (cached) {
     if (!(cached instanceof GraphQLEnumType)) {
       throw new Error(
-        `effect-graphql: type registry name collision for "${id}" (existing type is not an enum)`,
+        `@athanor/alembic: type registry name collision for "${id}" (existing type is not an enum)`,
       );
     }
     return cached;

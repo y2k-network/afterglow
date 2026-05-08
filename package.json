@@ -1,5 +1,5 @@
 {
-  "name": "effect-graphql",
+  "name": "@athanor/alembic",
   "module": "src/index.ts",
   "main": "src/index.ts",
   "type": "module",

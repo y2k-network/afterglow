@@ -1,4 +1,4 @@
-# effect-graphql
+# @athanor/alembic
 
 A Relay-purpose-built GraphQL server with an Effect-native execution layer.
 
@@ -35,13 +35,13 @@ Three legs:
   *doesn't*, but the runtime depends on.
 
 Existing TypeScript schema builders (Pothos, Nexus, TypeGraphQL) are mature
-and good at what they do. They are general-purpose. effect-graphql sits at a
+and good at what they do. They are general-purpose. @athanor/alembic sits at a
 narrower point in the design space: a server for teams that have decided
 they're using Relay, written against Effect.
 
 ## What's baked in
 
-These are not opt-in. Every schema produced by effect-graphql gets them.
+These are not opt-in. Every schema produced by @athanor/alembic gets them.
 
 - **`Node` interface and global IDs.** `Node { id: ID! }` is on the schema;
   every type registered with `builder.node()` implements it. Global IDs
@@ -118,7 +118,7 @@ T24:
 ## Install
 
 ```bash
-bun add effect-graphql graphql effect@beta
+bun add @athanor/alembic graphql effect@beta
 ```
 
 `graphql` is a peer dependency. `effect` must resolve to a v4 beta — pin
@@ -155,7 +155,7 @@ import {
   encodeGlobalId,
   scalars,
   toHttpApp,
-} from "effect-graphql"
+} from "@athanor/alembic"
 
 interface Todo {
   readonly id: string
@@ -393,7 +393,7 @@ multipart/mixed transport — T21).
 You can also call it directly without the HTTP layer:
 
 ```ts
-import { executeBfs } from "effect-graphql"
+import { executeBfs } from "@athanor/alembic"
 const result = await executeBfs({ schema, document, contextValue, variableValues })
 ```
 
@@ -476,7 +476,7 @@ Nullable-by-default favors partial-response resilience.
 
 `@semanticNonNull` exists to recover the "this field is semantically
 non-null" information for tooling without forcing wire non-null. The
-directive is declared on every effect-graphql schema. T17 lands the
+directive is declared on every @athanor/alembic schema. T17 lands the
 auto-emit pass that infers `@semanticNonNull` from non-nullable Effect
 Schemas paired with wire-nullable fields.
 
@@ -587,7 +587,7 @@ common Relay mutation footgun.
 Two helpers make resolver intent explicit:
 
 ```ts
-import { connectionEdge, deletedId } from "effect-graphql"
+import { connectionEdge, deletedId } from "@athanor/alembic"
 
 // @deleteRecord — return the deleted record's global id.
 return { deletedPostId: deletedId("Post", post.id) }
@@ -600,7 +600,7 @@ Two ergonomics helpers eliminate ref boilerplate when wiring these
 payloads:
 
 ```ts
-import { list, scalars } from "effect-graphql"
+import { list, scalars } from "@athanor/alembic"
 
 // builder.connection(NodeRef) returns a ConnectionRef whose `edgeRef` is
 // pre-built — no manual NamedOutputRef.
@@ -632,7 +632,7 @@ resilience: a single field error nulls one field instead of bubbling
 up and tanking the whole query. They answer **no** to (2) — when the
 resolver returns successfully, the value is meaningful and present.
 
-Most GraphQL servers conflate the two. `effect-graphql` separates
+Most GraphQL servers conflate the two. `@athanor/alembic` separates
 them:
 
 - **Wire is nullable by default.** Every field is `T` (not `T!`)
@@ -718,11 +718,11 @@ may not be logged in — set `semanticNonNull: false`:
 ### Printing the SDL
 
 `graphql-js`'s `printSchema` strips applied directives. Use
-`printSchemaWithDirectives` from `effect-graphql` to emit SDL that
+`printSchemaWithDirectives` from `@athanor/alembic` to emit SDL that
 preserves `@semanticNonNull` so `relay-compiler` can pick it up:
 
 ```ts
-import { printSchemaWithDirectives } from "effect-graphql"
+import { printSchemaWithDirectives } from "@athanor/alembic"
 
 await Bun.write("schema.graphql", printSchemaWithDirectives(schema))
 ```
@@ -731,13 +731,13 @@ Point `relay-compiler`'s `schema` config at that file.
 
 ## Standard scalars
 
-Every effect-graphql schema bundles a small library of standard custom
+Every @athanor/alembic schema bundles a small library of standard custom
 scalars. These are baked in — there is no `builder.scalar(...)`
 boilerplate to write, and they are present in introspection (and therefore
 in the printed SDL) on every server you build, even when no field
 references them. This is part of the zero-config Relay positioning: a
 Relay client configured with the matching `customScalarTypes` works
-against every effect-graphql server out of the box.
+against every @athanor/alembic server out of the box.
 
 | Scalar         | TS type   | Wire   | Notes                              |
 | -------------- | --------- | ------ | ---------------------------------- |
@@ -756,7 +756,7 @@ Use them as field types via the `scalars` namespace — no separate import:
 
 ```ts
 import { Effect } from "effect"
-import { createBuilder, scalars } from "effect-graphql"
+import { createBuilder, scalars } from "@athanor/alembic"
 
 const b = createBuilder().queryType({
   fields: () => ({
@@ -773,7 +773,7 @@ For input args / `builder.input(...)`, the matching Effect Schema codecs
 are exported under `standardSchemas`:
 
 ```ts
-import { standardSchemas } from "effect-graphql"
+import { standardSchemas } from "@athanor/alembic"
 
 // args: { since: { schema: standardSchemas.dateTime } }
 // args: { id:    { schema: standardSchemas.uuid     } }
@@ -840,7 +840,7 @@ The `graphql-transport-ws` subprotocol is implemented over a Bun
 WebSocket handler returned by `toWebSocketApp(schema, options)`.
 
 ```ts
-import { GraphQL, createBuilder } from "effect-graphql"
+import { GraphQL, createBuilder } from "@athanor/alembic"
 import { Effect, Stream } from "effect"
 
 const b3 = b2.subscriptionType({
@@ -904,18 +904,18 @@ Promise-based and your needs map cleanly to existing plugins.
 
 **vs Nexus / GraphQL Yoga.** Code-first or HTTP-focused but agnostic
 to the schema's shape. Relay conventions are configuration on top.
-effect-graphql inverts that: the conventions are the framework, your
+@athanor/alembic inverts that: the conventions are the framework, your
 domain is the configuration.
 
 **vs `graphql-relay-js` + raw `graphql-js`.** Lower-level building
 blocks. You write the `globalIdField`, the `connectionDefinitions`,
 the directive declarations, the persisted-query store, the GraphiQL
-mount, and the resolver-context plumbing yourself. effect-graphql
+mount, and the resolver-context plumbing yourself. @athanor/alembic
 *compiles down to* `GraphQLSchema` — anything raw graphql-js can do is
 reachable through the lowered schema — but the ergonomics gap is the
 gap.
 
-**vs `effect-graphql`.** That's us. Zero-config Relay-idiomatic,
+**vs `@athanor/alembic`.** That's us. Zero-config Relay-idiomatic,
 Effect-native execution.
 
 ## Relay client directives — full list
@@ -951,7 +951,7 @@ to `lower()`:
 
 ```ts
 import { GraphQLDirective, DirectiveLocation } from "graphql"
-import { getIR, lower } from "effect-graphql"
+import { getIR, lower } from "@athanor/alembic"
 
 const myDir = new GraphQLDirective({
   name: "my_custom",
@@ -1024,7 +1024,7 @@ scalars. The graphql-js spec built-in scalars (`String`, `Int`,
 `Float`, `Boolean`, `ID`) are exported as the `scalars` object:
 
 ```ts
-import { scalars } from "effect-graphql"
+import { scalars } from "@athanor/alembic"
 
 fields: () => ({
   name: { type: scalars.String, nonNull: true, resolve: ... },
