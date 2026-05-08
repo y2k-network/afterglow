@@ -38,6 +38,17 @@ export {
 } from "./relay-3d.ts";
 export { decodeGlobalId, encodeGlobalId } from "./relay.ts";
 export { scalars } from "./scalars.ts";
+export {
+  BigIntScalar,
+  DateScalar,
+  DateTimeScalar,
+  EmailAddressScalar,
+  JSONScalar,
+  URLScalar,
+  UUIDScalar,
+  standardScalarTypes,
+  standardSchemas,
+} from "./standard-scalars.ts";
 
 export * as GraphQL from "./graphql-namespace.ts";
 export { toHttpApp, type ToHttpAppOptions } from "./http.ts";

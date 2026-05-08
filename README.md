@@ -729,6 +729,78 @@ await Bun.write("schema.graphql", printSchemaWithDirectives(schema))
 
 Point `relay-compiler`'s `schema` config at that file.
 
+## Standard scalars
+
+Every effect-graphql schema bundles a small library of standard custom
+scalars. These are baked in — there is no `builder.scalar(...)`
+boilerplate to write, and they are present in introspection (and therefore
+in the printed SDL) on every server you build, even when no field
+references them. This is part of the zero-config Relay positioning: a
+Relay client configured with the matching `customScalarTypes` works
+against every effect-graphql server out of the box.
+
+| Scalar         | TS type   | Wire   | Notes                              |
+| -------------- | --------- | ------ | ---------------------------------- |
+| `DateTime`     | `Date`    | string | ISO-8601 timestamp                 |
+| `Date`         | `Date`    | string | ISO calendar date `YYYY-MM-DD`     |
+| `JSON`         | `unknown` | any    | passes JSON through unchanged      |
+| `URL`          | `URL`     | string | parses to a `URL` instance         |
+| `UUID`         | `string`  | string | RFC 4122, validated                |
+| `BigInt`       | `bigint`  | string | stringified for JSON safety        |
+| `EmailAddress` | `string`  | string | RFC 5322-light validation          |
+
+Names follow the
+[graphql-scalars](https://the-guild.dev/graphql/scalars) convention.
+
+Use them as field types via the `scalars` namespace — no separate import:
+
+```ts
+import { Effect } from "effect"
+import { createBuilder, scalars } from "effect-graphql"
+
+const b = createBuilder().queryType({
+  fields: () => ({
+    serverTime: {
+      type: scalars.DateTime,
+      nonNull: true,
+      resolve: () => Effect.succeed(new Date()),
+    },
+  }),
+})
+```
+
+For input args / `builder.input(...)`, the matching Effect Schema codecs
+are exported under `standardSchemas`:
+
+```ts
+import { standardSchemas } from "effect-graphql"
+
+// args: { since: { schema: standardSchemas.dateTime } }
+// args: { id:    { schema: standardSchemas.uuid     } }
+```
+
+### Relay client configuration
+
+Add the matching `customScalarTypes` block to `relay.config.js` so the
+Relay compiler emits correct TS types for every server in the ecosystem:
+
+```js
+module.exports = {
+  src: "./src",
+  schema: "./schema.graphql",
+  language: "typescript",
+  customScalarTypes: {
+    DateTime: "string",
+    Date: "string",
+    JSON: "unknown",
+    URL: "string",
+    UUID: "string",
+    BigInt: "string",
+    EmailAddress: "string",
+  },
+}
+```
+
 ## Custom scalars via Effect Schema
 
 Custom scalars are declared with `builder.scalar(name, { schema })`,
