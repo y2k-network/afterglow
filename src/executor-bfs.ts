@@ -291,20 +291,16 @@ async function executeFieldsLevel(
   path: Path | undefined,
   fields: Map<string, ReadonlyArray<G.FieldNode>>,
 ): Promise<Record<string, unknown>> {
-  const entries = Array.from(fields.entries());
-  const settled = await Promise.all(
-    entries.map(async ([responseName, fieldNodes]) => {
-      const fieldPath = addPath(path, responseName, parentType.name);
-      const result = await executeField(
-        exe,
-        parentType,
-        source,
-        fieldNodes,
-        fieldPath,
-      );
-      return [responseName, result] as const;
-    }),
-  );
+  const promises: Promise<readonly [string, unknown]>[] = [];
+  for (const [responseName, fieldNodes] of fields) {
+    const fieldPath = addPath(path, responseName, parentType.name);
+    promises.push(
+      executeField(exe, parentType, source, fieldNodes, fieldPath).then(
+        (result) => [responseName, result] as const,
+      ),
+    );
+  }
+  const settled = await Promise.all(promises);
 
   const out: Record<string, unknown> = Object.create(null);
   for (const [responseName, result] of settled) {
@@ -668,16 +664,28 @@ function isIterable(v: unknown): boolean {
   return typeof (v as { [Symbol.iterator]?: unknown })[Symbol.iterator] === "function";
 }
 
+const INCREMENTAL_DIRECTIVES: ReadonlySet<string> = new Set(["defer", "stream"]);
+
+function selectionHasIncremental(sel: G.SelectionNode): boolean {
+  if (sel.directives) {
+    for (const d of sel.directives) {
+      if (INCREMENTAL_DIRECTIVES.has(d.name.value)) return true;
+    }
+  }
+  if ("selectionSet" in sel && sel.selectionSet) {
+    for (const child of sel.selectionSet.selections) {
+      if (selectionHasIncremental(child)) return true;
+    }
+  }
+  return false;
+}
+
 function containsIncrementalDirective(doc: G.DocumentNode): boolean {
-  let found = false;
-  G.visit(doc, {
-    Directive(node) {
-      if (node.name.value === "defer" || node.name.value === "stream") {
-        found = true;
-        return G.BREAK;
-      }
-      return undefined;
-    },
-  });
-  return found;
+  for (const def of doc.definitions) {
+    if (def.kind !== G.Kind.OPERATION_DEFINITION && def.kind !== G.Kind.FRAGMENT_DEFINITION) continue;
+    for (const sel of def.selectionSet.selections) {
+      if (selectionHasIncremental(sel)) return true;
+    }
+  }
+  return false;
 }

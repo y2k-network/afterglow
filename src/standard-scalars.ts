@@ -167,8 +167,12 @@ export const JSONScalar: GraphQLScalarType<unknown, unknown> =
     name: "JSON",
     description:
       "Arbitrary JSON value (object, array, string, number, boolean, or null).",
-    serialize: (value) => cloneJson(value),
-    parseValue: (value) => cloneJson(value),
+    // serialize: graphql-js JSON.stringify's the return; no mutation, no
+    // need to defensive-clone. parseValue: variables come from JSON.parse
+    // per request; pass through. parseLiteral: AST values may be shared
+    // across requests for cached documents — clone there.
+    serialize: (value) => value,
+    parseValue: (value) => value,
     parseLiteral: (node) => literalToJson(node),
   });
 

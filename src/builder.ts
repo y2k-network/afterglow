@@ -67,15 +67,7 @@ import type {
 const ID_TAG = Symbol("v2/id");
 export const ID: IDMarker = Object.freeze({ [ID_TAG]: "ID" }) as unknown as IDMarker;
 
-const EFFECT_TYPE_ID = "~effect/Effect";
-
-const isEffect = (v: unknown): boolean => {
-  return (
-    v !== null &&
-    typeof v === "object" &&
-    EFFECT_TYPE_ID in (v as object)
-  );
-};
+const isEffect = Effect.isEffect;
 
 // ---------------------------------------------------------------------------
 // Custom scalar

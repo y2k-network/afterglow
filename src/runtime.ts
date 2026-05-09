@@ -63,11 +63,11 @@ export function wrapResolver<R, ReqR = unknown>(
 }
 
 export function buildArgsDecoder(
-  args: Record<string, IRArgDef>,
+  args: Record<string, IRArgDef> | undefined,
 ): (rawArgs: Record<string, unknown>) => Record<string, unknown> {
   const entries: Array<readonly [string, (input: unknown) => unknown]> = [];
 
-  for (const [name, def] of Object.entries(args)) {
+  for (const [name, def] of Object.entries(args ?? {})) {
     assertSyncDecodable(name, def.schema);
     const decode = Schema.decodeUnknownSync(
       def.schema as unknown as Schema.Decoder<unknown, never>,

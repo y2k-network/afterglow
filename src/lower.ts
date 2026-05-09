@@ -58,6 +58,8 @@ import { schemaToInputType, schemaToScalar } from "./schema-bridge.ts";
 import { standardScalarTypes } from "./standard-scalars.ts";
 
 const CONNECTION_ARGS = connectionArgs();
+const RELAY_DIRECTIVES = relayDirectives();
+const FRAMEWORK_DIRECTIVES = [...specifiedDirectives, ...RELAY_DIRECTIVES];
 import type {
   IR,
   IRArgDef,
@@ -264,14 +266,11 @@ export function lower<R, ReqR = unknown>(
   });
 
   let mutation: GraphQLObjectType | undefined;
-  if (Object.keys(ir.mutationFields).length > 0) {
-    const mutationFieldMap: GraphQLFieldConfigMap<
-      unknown,
-      Context.Context<ReqR>
-    > = {};
-    for (const [name, def] of Object.entries(ir.mutationFields)) {
-      mutationFieldMap[name] = buildFieldConfig<R, ReqR>(def, registry, runtime);
-    }
+  const mutationFieldMap: GraphQLFieldConfigMap<unknown, Context.Context<ReqR>> = {};
+  for (const name in ir.mutationFields) {
+    mutationFieldMap[name] = buildFieldConfig<R, ReqR>(ir.mutationFields[name]!, registry, runtime);
+  }
+  if (Object.keys(mutationFieldMap).length !== 0) {
     mutation = new GraphQLObjectType<unknown, Context.Context<ReqR>>({
       name: "Mutation",
       fields: () => mutationFieldMap,
@@ -279,18 +278,15 @@ export function lower<R, ReqR = unknown>(
   }
 
   let subscription: GraphQLObjectType | undefined;
-  if (Object.keys(ir.subscriptionFields).length > 0) {
-    const subFieldMap: GraphQLFieldConfigMap<
-      unknown,
-      Context.Context<ReqR>
-    > = {};
-    for (const [name, def] of Object.entries(ir.subscriptionFields)) {
-      subFieldMap[name] = buildSubscriptionFieldConfig<R, ReqR>(
-        def,
-        registry,
-        runtime,
-      );
-    }
+  const subFieldMap: GraphQLFieldConfigMap<unknown, Context.Context<ReqR>> = {};
+  for (const name in ir.subscriptionFields) {
+    subFieldMap[name] = buildSubscriptionFieldConfig<R, ReqR>(
+      ir.subscriptionFields[name]!,
+      registry,
+      runtime,
+    );
+  }
+  if (Object.keys(subFieldMap).length !== 0) {
     subscription = new GraphQLObjectType<unknown, Context.Context<ReqR>>({
       name: "Subscription",
       fields: () => subFieldMap,
@@ -302,11 +298,10 @@ export function lower<R, ReqR = unknown>(
     mutation,
     subscription,
     types: Array.from(registry.values()),
-    directives: [
-      ...specifiedDirectives,
-      ...relayDirectives(),
-      ...(options.extraDirectives ?? []),
-    ],
+    directives:
+      options.extraDirectives && options.extraDirectives.length !== 0
+        ? [...FRAMEWORK_DIRECTIVES, ...options.extraDirectives]
+        : FRAMEWORK_DIRECTIVES,
   });
 }
 
@@ -343,18 +338,18 @@ function buildObjectFields<R, ReqR>(
 }
 
 function buildFieldConfig<R, ReqR>(
-  rawDef: IRFieldDef,
+  def: IRFieldDef,
   registry: Map<string, GraphQLNamedType>,
   runtime: ManagedRuntime.ManagedRuntime<R, never> | null,
   ownerName: string = "<root>",
   fieldName: string = "<field>",
 ): GraphQLFieldConfig<unknown, Context.Context<ReqR>> {
-  const def: IRFieldDef = { ...rawDef, args: rawDef.args ?? {} };
   const baseType = resolveOutputType(def.type, registry, ownerName, fieldName);
   const finalType = def.nonNull ? new GraphQLNonNull(baseType) : baseType;
+  const defArgs = def.args ?? {};
 
   const args: GraphQLFieldConfigArgumentMap = {};
-  for (const [argName, argDef] of Object.entries(def.args)) {
+  for (const [argName, argDef] of Object.entries(defArgs)) {
     const inputType = schemaToInputType(argDef.schema, registry);
     const cfg: GraphQLArgumentConfig = { type: inputType };
     if (argDef.description !== undefined) cfg.description = argDef.description;
