@@ -2,13 +2,20 @@
  * Soft-fail bench regression check.
  *
  * Reads `bench/results.json` (produced by `bun run bench`) and compares
- * against a baseline that may be downloaded from a previous CI artifact at
+ * against a baseline downloaded from a previous CI artifact at
  * `bench/baseline.json`. If the baseline is absent (first run), prints an
  * informational message and exits 0.
  *
- * If any benchmark slows down by more than 10% relative to baseline, prints
- * a warning. The bench workflow runs this with `continue-on-error: true`
- * so the warning surfaces without blocking the merge.
+ * If any benchmark slows down by more than the threshold relative to
+ * baseline, prints a warning. The bench workflow runs this with
+ * `continue-on-error: true` so the warning surfaces without blocking the
+ * merge.
+ *
+ * results.json shape (matches `bench/harness.ts`'s `AggregatedResults`):
+ *   { results: { [groupName]: BenchResult[] } }
+ *
+ * Each `BenchResult` has `opsPerSec`. Higher is better; a drop > threshold
+ * is a regression.
  */
 import { existsSync } from "node:fs";
 
@@ -28,36 +35,33 @@ if (!existsSync(BASELINE_PATH)) {
 
 interface BenchEntry {
   readonly name: string;
-  readonly opsPerSec?: number;
-  readonly nsPerOp?: number;
+  readonly opsPerSec: number;
 }
 
 interface BenchFile {
-  readonly results: ReadonlyArray<BenchEntry>;
+  readonly results: { readonly [groupName: string]: ReadonlyArray<BenchEntry> };
 }
 
-const current = (await Bun.file(RESULTS_PATH).json()) as BenchFile;
-const baseline = (await Bun.file(BASELINE_PATH).json()) as BenchFile;
+const flatten = (file: BenchFile): BenchEntry[] => {
+  const out: BenchEntry[] = [];
+  for (const group of Object.values(file.results)) {
+    if (Array.isArray(group)) out.push(...group);
+  }
+  return out;
+};
+
+const current = flatten((await Bun.file(RESULTS_PATH).json()) as BenchFile);
+const baseline = flatten((await Bun.file(BASELINE_PATH).json()) as BenchFile);
 
 const baselineByName = new Map<string, BenchEntry>();
-for (const entry of baseline.results) baselineByName.set(entry.name, entry);
+for (const entry of baseline) baselineByName.set(entry.name, entry);
 
 const regressions: Array<{ name: string; deltaPct: number }> = [];
 
-for (const entry of current.results) {
+for (const entry of current) {
   const base = baselineByName.get(entry.name);
-  if (!base) continue;
-
-  // Prefer opsPerSec when present; fall back to nsPerOp (lower is better).
-  let deltaPct = 0;
-  if (entry.opsPerSec != null && base.opsPerSec != null && base.opsPerSec > 0) {
-    deltaPct = (base.opsPerSec - entry.opsPerSec) / base.opsPerSec;
-  } else if (entry.nsPerOp != null && base.nsPerOp != null && base.nsPerOp > 0) {
-    deltaPct = (entry.nsPerOp - base.nsPerOp) / base.nsPerOp;
-  } else {
-    continue;
-  }
-
+  if (!base || base.opsPerSec <= 0) continue;
+  const deltaPct = (base.opsPerSec - entry.opsPerSec) / base.opsPerSec;
   if (deltaPct > REGRESSION_THRESHOLD) {
     regressions.push({ name: entry.name, deltaPct });
   }
@@ -66,7 +70,9 @@ for (const entry of current.results) {
 const thresholdPct = (REGRESSION_THRESHOLD * 100).toFixed(0);
 
 if (regressions.length === 0) {
-  console.log(`check-bench-regression: no regressions over ${thresholdPct}%.`);
+  console.log(
+    `check-bench-regression: no regressions over ${thresholdPct}% across ${current.length} benches.`,
+  );
   process.exit(0);
 }
 
