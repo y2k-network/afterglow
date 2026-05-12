@@ -12,8 +12,8 @@
  * implemented at runtime — values constructed by the framework satisfy the
  * brand by virtue of the cast at the construction site.
  */
-import type { Effect, Schema, Stream } from "effect";
-import type { GraphQLResolveInfo } from "graphql";
+import type { Effect, Schema } from "effect";
+import type { GraphQLResolveInfo } from "./alembic-graphql/type/definition.ts";
 
 // ---------------------------------------------------------------------------
 // ID — sentinel value used as a field type
@@ -84,16 +84,38 @@ export type FieldOutputType =
 // Argument shapes
 // ---------------------------------------------------------------------------
 
-export type ArgDef = Schema.Top | { readonly schema: Schema.Top; readonly description?: string };
+/**
+ * Marker that turns an arg into a Relay global id. The wire type is `ID!`,
+ * the framework decodes before the resolver runs, and the resolver sees the
+ * raw id (not the base64 blob). When constructed via `GraphQL.id(NodeClass)`
+ * the framework also verifies the decoded `__typename` matches `NodeClass`.
+ */
+declare const GlobalIdArgBrand: unique symbol;
+export interface GlobalIdArg {
+  readonly [GlobalIdArgBrand]: true;
+  readonly schema: Schema.Top;
+  readonly description?: string;
+  readonly globalId: { readonly expectedTypename: string | null };
+}
+
+export type ArgDef =
+  | Schema.Top
+  | IDMarker
+  | { readonly schema: Schema.Top; readonly description?: string }
+  | GlobalIdArg;
 export type ArgDefs = Record<string, ArgDef>;
 
-type ArgType<A extends ArgDef> = A extends Schema.Top
-  ? A["Type"]
-  : A extends { readonly schema: infer S }
-    ? S extends Schema.Top
-      ? S["Type"]
-      : never
-    : never;
+type ArgType<A extends ArgDef> = A extends IDMarker
+  ? string
+  : A extends GlobalIdArg
+    ? string
+    : A extends Schema.Top
+      ? A["Type"]
+      : A extends { readonly schema: infer S }
+        ? S extends Schema.Top
+          ? S["Type"]
+          : never
+        : never;
 
 export type ArgsShape<A extends ArgDefs | undefined> = A extends ArgDefs
   ? { readonly [K in keyof A]: ArgType<A[K]> }
@@ -111,21 +133,6 @@ export interface FieldDef<TParent, R> {
   // R covariant (output position) so FieldDef<T, never> is assignable to
   // FieldDef<T, any> — required for union narrowing in NodeFieldOutput<T>.
   readonly _phantom?: { readonly parent: (p: TParent) => TParent; readonly r: () => R };
-}
-
-/** Internal: each FieldDef carries a payload accessed through this private slot. */
-export interface RawFieldPayload {
-  readonly type: FieldOutputType;
-  readonly nonNull: boolean;
-  readonly semanticNonNull?: boolean;
-  readonly description?: string;
-  readonly args: ArgDefs;
-  /** When undefined, the field is a Schema.Class pass-through (parent[fieldName]). */
-  readonly resolve?: (
-    parent: unknown,
-    args: unknown,
-    info: GraphQLResolveInfo,
-  ) => unknown | Effect.Effect<unknown, unknown, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,28 +179,3 @@ export interface SubscriptionFieldDef<R> {
   readonly _r?: () => R;
 }
 
-/** Internal raw shapes — used by builder/lower. */
-export interface RawRootFieldPayload {
-  readonly type: FieldOutputType | ConnectionType<unknown>;
-  readonly nonNull: boolean;
-  readonly semanticNonNull?: boolean;
-  readonly description?: string;
-  readonly args: ArgDefs;
-  readonly resolve: (
-    parent: unknown,
-    args: unknown,
-    info: GraphQLResolveInfo,
-  ) => unknown | Effect.Effect<unknown, unknown, unknown>;
-}
-
-export interface RawSubscriptionFieldPayload {
-  readonly type: FieldOutputType;
-  readonly nonNull: boolean;
-  readonly description?: string;
-  readonly args: ArgDefs;
-  readonly stream: (
-    parent: unknown,
-    args: unknown,
-    info: GraphQLResolveInfo,
-  ) => Stream.Stream<unknown, unknown, unknown> | Effect.Effect<Stream.Stream<unknown, unknown, unknown>, unknown, unknown>;
-}

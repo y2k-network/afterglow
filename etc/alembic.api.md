@@ -6,21 +6,17 @@
 
 import { Context } from 'effect';
 import { Effect } from 'effect';
-import * as G from 'graphql';
-import { GraphQLDirective } from 'graphql';
-import type { GraphQLResolveInfo } from 'graphql';
-import { GraphQLScalarType } from 'graphql';
-import { GraphQLSchema } from 'graphql';
+import { HttpServerError } from 'effect/unstable/http';
 import { HttpServerRequest } from 'effect/unstable/http';
 import { HttpServerResponse } from 'effect/unstable/http';
 import { Layer } from 'effect';
-import { ManagedRuntime } from 'effect';
 import { Schema } from 'effect';
 import { Stream } from 'effect';
 import { VoidIfEmpty } from 'effect/Types';
-import type { WebSocketHandler } from 'bun';
 import { YieldableError } from 'effect/Cause';
 
+// Warning: (ae-forgotten-export) The symbol "GraphQLDirective" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
 export const aliasDirective: GraphQLDirective;
 
@@ -33,7 +29,7 @@ export const appendNodeDirective: GraphQLDirective;
 // @public (undocumented)
 export const assignableDirective: GraphQLDirective;
 
-// @public
+// @public (undocumented)
 export interface BfsExecuteArgs {
     // (undocumented)
     readonly contextValue?: unknown;
@@ -43,19 +39,25 @@ export interface BfsExecuteArgs {
     readonly operationName?: string | null;
     // (undocumented)
     readonly rootValue?: unknown;
+    // Warning: (ae-forgotten-export) The symbol "G" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
     readonly schema: G.GraphQLSchema;
     // (undocumented)
     readonly variableValues?: Record<string, unknown> | null;
 }
 
+// Warning: (ae-forgotten-export) The symbol "GraphQLScalarType" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
 export const BigIntScalar: GraphQLScalarType<bigint, string>;
 
-// Warning: (ae-forgotten-export) The symbol "BuildSchemaOptions" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLSchema" needs to be exported by the entry point index.d.ts
 //
-// @public (undocumented)
-export const buildSchema: <R, RA extends R>(schemaLayer: Layer.Layer<never, never, R>, runtime: ManagedRuntime.ManagedRuntime<RA, never> | null, options?: BuildSchemaOptions) => GraphQLSchema;
+// @public
+export const buildSchema: <R>(schemaLayer: Layer.Layer<never, never, R>, options?: {
+    readonly muteLintWarnings?: ReadonlyArray<string>;
+}) => GraphQLSchema;
 
 // @public (undocumented)
 export const catchDirective: GraphQLDirective;
@@ -108,8 +110,11 @@ export function decodeGlobalId(globalId: string): {
 // @public (undocumented)
 export const deferDirective: GraphQLDirective;
 
+// @public
+export function deletedId(node: SchemaClass<unknown>, rawId: string): string;
+
 // @public (undocumented)
-export const deletedId: (typename: string, id: string) => string;
+export function deletedId(typename: string, rawId: string): string;
 
 // @public (undocumented)
 export const deleteEdgeDirective: GraphQLDirective;
@@ -130,7 +135,7 @@ export const EmailAddressScalar: GraphQLScalarType<string, string>;
 export function encodeGlobalId(typename: string, rawId: string): string;
 
 // @public (undocumented)
-export function executeBfs(args: BfsExecuteArgs): Promise<G.ExecutionResult>;
+export const executeBfs: <R = never>(args: BfsExecuteArgs) => Effect.Effect<G.ExecutionResult, never, R>;
 
 // @public
 export const fetchableDirective: GraphQLDirective;
@@ -140,7 +145,7 @@ export function field<TParent, T, R = never>(type: ConnectionType<T>, options: {
     readonly nonNull?: boolean;
     readonly semanticNonNull?: boolean;
     readonly description?: string;
-    readonly resolve: (parent: TParent, args: PaginationArgs) => Effect.Effect<ConnectionPayload<T>, any, R> | ConnectionPayload<T>;
+    readonly resolve: (parent: TParent, args: PaginationArgs) => Effect.Effect<ConnectionPayload<T>, unknown, R> | ConnectionPayload<T>;
 }): FieldDef<TParent, R>;
 
 // Warning: (ae-forgotten-export) The symbol "ArgDefs" needs to be exported by the entry point index.d.ts
@@ -191,9 +196,10 @@ declare namespace GraphQL {
         ToHttpAppOptions,
         lintSchema,
         LintIssue,
+        printSchemaWithDirectives,
+        PrintSchemaOptions,
         toWebSocketApp,
         ToWebSocketAppOptions,
-        ToWebSocketAppResult,
         ConnectionPayload,
         ConnectionType,
         FieldDef,
@@ -209,6 +215,14 @@ declare namespace GraphQL {
 
 // @public (undocumented)
 export const ID: IDMarker;
+
+// Warning: (ae-forgotten-export) The symbol "GlobalIdArgShape" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+export function id(node: SchemaClass<unknown>): GlobalIdArgShape;
+
+// @public (undocumented)
+export function id(): GlobalIdArgShape;
 
 // @public (undocumented)
 export interface IDMarker {
@@ -254,7 +268,7 @@ export interface LintIssue {
 export function lintSchema(ir: IR): ReadonlyArray<LintIssue>;
 
 // @public (undocumented)
-export function lower<R, ReqR = unknown>(ir: IR, runtime: ManagedRuntime.ManagedRuntime<R, never> | null, options?: LowerOptions): GraphQLSchema;
+export function lower(ir: IR, options?: LowerOptions): GraphQLSchema;
 
 // @public (undocumented)
 export interface LowerOptions {
@@ -287,7 +301,7 @@ export function mutationField<O, I, A extends ArgDefs | undefined = undefined, R
     readonly args?: A;
     readonly resolve: (root: unknown, args: (A extends ArgDefs ? ArgsShape<A> : {}) & {
         readonly input: I;
-    }) => Effect.Effect<O, any, R>;
+    }, info: GraphQLResolveInfo) => Effect.Effect<O, unknown, R>;
 }): MutationFieldDef<R>;
 
 // @public (undocumented)
@@ -297,7 +311,7 @@ export function mutationField<O, A extends ArgDefs | undefined = undefined, R = 
     readonly semanticNonNull?: boolean;
     readonly description?: string;
     readonly args?: A;
-    readonly resolve: (root: unknown, args: A extends ArgDefs ? ArgsShape<A> : {}) => Effect.Effect<O, any, R>;
+    readonly resolve: (root: unknown, args: A extends ArgDefs ? ArgsShape<A> : {}, info: GraphQLResolveInfo) => Effect.Effect<O, unknown, R>;
 }): MutationFieldDef<R>;
 
 // @public (undocumented)
@@ -312,7 +326,7 @@ export interface MutationFieldDef<R> {
 export const Node: {
     layer<T>(cls: SchemaClass<T>): <RLoad = never, RFields = never>(config: {
         readonly fields?: (f: FieldHelper<T>) => Record<string, NodeFieldOutput<T>>;
-        readonly load: (id: string) => Effect.Effect<T | null, any, RLoad>;
+        readonly load: (id: string) => Effect.Effect<T | null, unknown, RLoad>;
         readonly description?: string;
     }) => Layer.Layer<never, never, RLoad | RFields>;
 };
@@ -345,6 +359,14 @@ export const prependEdgeDirective: GraphQLDirective;
 export const prependNodeDirective: GraphQLDirective;
 
 // @public (undocumented)
+export interface PrintSchemaOptions {
+    readonly forRelayCompiler?: boolean;
+}
+
+// @public (undocumented)
+export function printSchemaWithDirectives(schema: GraphQLSchema, options?: PrintSchemaOptions): string;
+
+// @public (undocumented)
 export const Query: {
     layer<R = never>(fields: Record<string, QueryFieldDef<R>>): Layer.Layer<never, never, R>;
 };
@@ -352,7 +374,7 @@ export const Query: {
 // @public (undocumented)
 export function queryField<T, R = never>(type: ConnectionType<T>, options: {
     readonly description?: string;
-    readonly resolve: (root: unknown, args: PaginationArgs) => Effect.Effect<ConnectionPayload<T>, any, R>;
+    readonly resolve: (root: unknown, args: PaginationArgs, info: GraphQLResolveInfo) => Effect.Effect<ConnectionPayload<T>, unknown, R>;
 }): QueryFieldDef<R>;
 
 // @public (undocumented)
@@ -361,7 +383,7 @@ export function queryField<T, A extends ArgDefs | undefined, R = never>(type: Sc
     readonly semanticNonNull?: boolean;
     readonly description?: string;
     readonly args?: A;
-    readonly resolve: (root: unknown, args: A extends ArgDefs ? ArgsShape<A> : {}) => Effect.Effect<T, any, R>;
+    readonly resolve: (root: unknown, args: A extends ArgDefs ? ArgsShape<A> : {}, info: GraphQLResolveInfo) => Effect.Effect<T, unknown, R>;
 }): QueryFieldDef<R>;
 
 // @public (undocumented)
@@ -390,7 +412,7 @@ export const requiredDirective: GraphQLDirective;
 // Warning: (ae-forgotten-export) The symbol "WithResolver" needs to be exported by the entry point index.d.ts
 //
 // @public
-export function resolve<TParent, S extends Schema.Top>(fn: (parent: TParent) => S["Type"] | Effect.Effect<S["Type"], any, any>): (self: S) => WithResolver<TParent, S>;
+export function resolve<TParent, S extends Schema.Top>(fn: (parent: TParent) => S["Type"] | Effect.Effect<S["Type"], unknown, any>): (self: S) => WithResolver<TParent, S>;
 
 // @public (undocumented)
 export function Scalar<T>(name: string, schema: Schema.Codec<T, string | number | boolean, never, never>, description?: string): ScalarType<T>;
@@ -441,7 +463,7 @@ export function subscriptionField<T, A extends ArgDefs | undefined, R = never>(t
     readonly nonNull?: boolean;
     readonly description?: string;
     readonly args?: A;
-    readonly stream: (root: unknown, args: A extends ArgDefs ? ArgsShape<A> : {}) => Stream.Stream<T, any, R> | Effect.Effect<Stream.Stream<T, any, R>, any, R>;
+    readonly stream: (root: unknown, args: A extends ArgDefs ? ArgsShape<A> : {}, info: GraphQLResolveInfo) => Stream.Stream<T, unknown, R> | Effect.Effect<Stream.Stream<T, unknown, R>, unknown, R>;
 }): SubscriptionFieldDef<R>;
 
 // @public (undocumented)
@@ -462,43 +484,34 @@ export function toConnection<T>(rows: ReadonlyArray<T>, options: {
     hasPreviousPage?: boolean;
 }): ConnectionPayload<T>;
 
-// @public
-export const toHttpApp: <R, RA extends R>(schemaLayer: Layer.Layer<never, never, R>, options: ToHttpAppOptions<R, RA>) => Effect.Effect<HttpServerResponse.HttpServerResponse, never, HttpServerRequest.HttpServerRequest>;
-
 // @public (undocumented)
-export interface ToHttpAppOptions<R, RA extends R> {
+export const toHttpApp: <R>(schemaLayer: Layer.Layer<never, never, R>, options?: ToHttpAppOptions) => Effect.Effect<HttpServerResponse.HttpServerResponse, never, HttpServerRequest.HttpServerRequest | R>;
+
+// @public
+export interface ToHttpAppOptions {
     // (undocumented)
     readonly allowGet?: boolean;
+    readonly executor?: "default" | "bfs";
     // (undocumented)
-    readonly executor?: ToHttpAppOptions_2<unknown>["executor"];
-    // Warning: (ae-forgotten-export) The symbol "ToHttpAppOptions_2" needs to be exported by the entry point index.d.ts
+    readonly graphiql?: boolean | {
+        readonly title?: string;
+        readonly defaultQuery?: string;
+    };
+    readonly muteLintWarnings?: ReadonlyArray<string>;
+    // Warning: (ae-forgotten-export) The symbol "PersistedQueriesOptions" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
-    readonly graphiql?: ToHttpAppOptions_2<unknown>["graphiql"];
-    readonly muteLintWarnings?: ReadonlyArray<string>;
-    // (undocumented)
-    readonly persistedQueries?: ToHttpAppOptions_2<unknown>["persistedQueries"];
-    readonly requestContext?: Layer.Layer<Exclude<R, RA>, never, HttpServerRequest.HttpServerRequest>;
-    readonly runtime: ManagedRuntime.ManagedRuntime<RA, never>;
+    readonly persistedQueries?: PersistedQueriesOptions;
 }
 
 // @public (undocumented)
-export const toWebSocketApp: <R, RA extends R, ReqR = never, OnConnectE = never, OnConnectR = never>(schemaLayer: Layer.Layer<never, never, R>, runtime: ManagedRuntime.ManagedRuntime<RA, never>, options?: ToWebSocketAppOptions<ReqR, OnConnectE, OnConnectR>) => ToWebSocketAppResult<ReqR, OnConnectE, OnConnectR>;
+export const toWebSocketApp: <R>(schemaLayer: Layer.Layer<never, never, R>, options?: ToWebSocketAppOptions) => Effect.Effect<HttpServerResponse.HttpServerResponse, HttpServerError.HttpServerError, HttpServerRequest.HttpServerRequest | R>;
 
-// @public
-export interface ToWebSocketAppOptions<ReqR, OnConnectE, OnConnectR> {
-    readonly onConnect?: (payload: unknown, request: Request) => Effect.Effect<Context.Context<ReqR>, OnConnectE, OnConnectR>;
-    readonly onConnectLayer?: Layer.Layer<OnConnectR, never, never>;
-}
-
-// @public
-export interface ToWebSocketAppResult<ReqR, OnConnectE, OnConnectR> {
-    readonly _phantom?: (_: OnConnectE, __: OnConnectR) => void;
-    readonly upgrade: (request: Request, server: {
-        upgrade: (req: Request, opts?: unknown) => boolean;
-    }) => boolean;
-    // Warning: (ae-forgotten-export) The symbol "ConnectionData" needs to be exported by the entry point index.d.ts
-    readonly websocket: WebSocketHandler<ConnectionData<ReqR>>;
+// @public (undocumented)
+export interface ToWebSocketAppOptions {
+    // (undocumented)
+    readonly muteLintWarnings?: ReadonlyArray<string>;
+    readonly onConnect?: (payload: unknown) => Effect.Effect<Context.Context<never>, unknown, unknown>;
 }
 
 // @public (undocumented)
@@ -514,7 +527,7 @@ export const UUIDScalar: GraphQLScalarType<string, string>;
 export const Viewer: {
     layer<TParent, RResolve = never, RFields = never>(config: {
         readonly fields?: (f: FieldHelper<TParent>) => Record<string, NodeFieldOutput<TParent>>;
-        readonly resolve: () => Effect.Effect<TParent, any, RResolve>;
+        readonly resolve: () => Effect.Effect<TParent, unknown, RResolve>;
         readonly description?: string;
     }): Layer.Layer<never, never, RFields | RResolve>;
 };
@@ -524,8 +537,9 @@ export const waterfallDirective: GraphQLDirective;
 
 // Warnings were encountered during analysis:
 //
-// src/builder.ts:547:9 - (ae-forgotten-export) The symbol "FieldHelper" needs to be exported by the entry point index.d.ts
-// src/builder.ts:547:9 - (ae-forgotten-export) The symbol "NodeFieldOutput" needs to be exported by the entry point index.d.ts
+// src/builder.ts:595:9 - (ae-forgotten-export) The symbol "FieldHelper" needs to be exported by the entry point index.d.ts
+// src/builder.ts:595:9 - (ae-forgotten-export) The symbol "NodeFieldOutput" needs to be exported by the entry point index.d.ts
+// src/builder.ts:864:5 - (ae-forgotten-export) The symbol "GraphQLResolveInfo" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

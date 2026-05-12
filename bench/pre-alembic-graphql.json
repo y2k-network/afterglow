@@ -1,0 +1,303 @@
+{
+  "hardware": {
+    "bun": "1.3.10",
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpu": "arm64"
+  },
+  "harness": "mitata",
+  "timestamp": "2026-05-08T23:18:32.558Z",
+  "results": {
+    "resolver-throughput": [
+      {
+        "name": "single resolver / default executor",
+        "opsPerSec": 282326.36928289104,
+        "msPerOp": 0.003542,
+        "stats": {
+          "min": 2792,
+          "max": 1445833,
+          "avg": 4369.055406766078,
+          "p50": 3542,
+          "p75": 3917,
+          "p99": 12083,
+          "samples": 145993,
+          "ticks": 145993
+        }
+      },
+      {
+        "name": "single resolver / bfs executor",
+        "opsPerSec": 143698.8072998994,
+        "msPerOp": 0.006959,
+        "stats": {
+          "min": 5583,
+          "max": 1108416,
+          "avg": 8184.199761944377,
+          "p50": 6959,
+          "p75": 7750,
+          "p99": 17291,
+          "samples": 78133,
+          "ticks": 78133
+        }
+      },
+      {
+        "name": "100 siblings / default executor",
+        "opsPerSec": 10801.118995927978,
+        "msPerOp": 0.092583,
+        "stats": {
+          "min": 83042,
+          "max": 1220791,
+          "avg": 103750.87930474334,
+          "p50": 92583,
+          "p75": 101209,
+          "p99": 201292,
+          "samples": 6156,
+          "ticks": 6156
+        }
+      },
+      {
+        "name": "100 siblings / bfs executor",
+        "opsPerSec": 8365.260745177427,
+        "msPerOp": 0.119542,
+        "stats": {
+          "min": 109584,
+          "max": 1164667,
+          "avg": 132553.293946932,
+          "p50": 119542,
+          "p75": 127750,
+          "p99": 253750,
+          "samples": 4824,
+          "ticks": 4824
+        }
+      },
+      {
+        "name": "10-deep nested / default executor",
+        "opsPerSec": 565739.3706674357,
+        "msPerOp": 0.001767598388671875,
+        "stats": {
+          "min": 1405.171630859375,
+          "max": 1984.4970703125,
+          "avg": 1691.5910754257375,
+          "p50": 1767.598388671875,
+          "p75": 1852.264404296875,
+          "p99": 1947.49951171875,
+          "samples": 89,
+          "ticks": 364544
+        }
+      },
+      {
+        "name": "10-deep nested / bfs executor",
+        "opsPerSec": 126683.67741436635,
+        "msPerOp": 0.0078936767578125,
+        "stats": {
+          "min": 7731.57763671875,
+          "max": 8131.35791015625,
+          "avg": 7930.507064819336,
+          "p50": 7893.6767578125,
+          "p75": 8043.161865234375,
+          "p99": 8109.517333984375,
+          "samples": 16,
+          "ticks": 65536
+        }
+      }
+    ],
+    "schema-build": [
+      {
+        "name": "cold schema build (100 types, 5 fields each)",
+        "medianMs": 1.822416,
+        "samplesMs": [
+          9.060459,
+          3.074708,
+          1.997375,
+          1.684084,
+          1.822416,
+          1.275958,
+          1.160708
+        ]
+      },
+      {
+        "name": "warm rebuild (cached layer composition)",
+        "medianMs": 0.982375,
+        "samplesMs": [
+          1.104875,
+          3.023958,
+          0.982375,
+          0.850667,
+          0.809541,
+          0.872875,
+          1.010167
+        ]
+      }
+    ],
+    "pagination": [
+      {
+        "name": "connection page first:10 of 1000 / default",
+        "opsPerSec": 36809.364302278496,
+        "msPerOp": 0.027167,
+        "stats": {
+          "min": 23667,
+          "max": 1433084,
+          "avg": 31852.4002194076,
+          "p50": 27167,
+          "p75": 30000,
+          "p99": 66792,
+          "samples": 20054,
+          "ticks": 20054
+        }
+      },
+      {
+        "name": "connection page first:10 of 1000 / bfs",
+        "opsPerSec": 19950.124688279302,
+        "msPerOp": 0.050125,
+        "stats": {
+          "min": 43625,
+          "max": 1218250,
+          "avg": 57098.50254851113,
+          "p50": 50125,
+          "p75": 54417,
+          "p99": 107708,
+          "samples": 11183,
+          "ticks": 11183
+        }
+      }
+    ],
+    "bfs-batching": {
+      "setup": {
+        "users": 100,
+        "postsPerUser": 10
+      },
+      "batchShape": {
+        "default": {
+          "batchCalls": 1,
+          "totalRequests": 100,
+          "sizes": [
+            100
+          ]
+        },
+        "bfs": {
+          "batchCalls": 1,
+          "totalRequests": 100,
+          "sizes": [
+            100
+          ]
+        }
+      },
+      "benchmarks": [
+        {
+          "name": "BFS demo / default executor (batches ≈ 1)",
+          "opsPerSec": 276.1128174883232,
+          "msPerOp": 3.621708,
+          "stats": {
+            "min": 2756875,
+            "max": 6783167,
+            "avg": 4042303.3181818184,
+            "p50": 3621708,
+            "p75": 4497542,
+            "p99": 6661375,
+            "samples": 154,
+            "ticks": 154
+          }
+        },
+        {
+          "name": "BFS demo / bfs executor (batches ≈ 1)",
+          "opsPerSec": 153.6108220667476,
+          "msPerOp": 6.509958,
+          "stats": {
+            "min": 5122917,
+            "max": 9562167,
+            "avg": 6915425.573033708,
+            "p50": 6509958,
+            "p75": 8014417,
+            "p99": 9468042,
+            "samples": 89,
+            "ticks": 89
+          }
+        }
+      ]
+    },
+    "subscriptions-memory": {
+      "setup": {
+        "subs": 100,
+        "intervalMs": 50,
+        "durationMs": 10000
+      },
+      "samples": [
+        {
+          "tMs": 0,
+          "rssMb": 94.97,
+          "heapUsedMb": 0.2,
+          "received": 100
+        },
+        {
+          "tMs": 1001.827958,
+          "rssMb": 103.28,
+          "heapUsedMb": 11.02,
+          "received": 2000
+        },
+        {
+          "tMs": 2002.720292,
+          "rssMb": 106.89,
+          "heapUsedMb": 13.92,
+          "received": 3900
+        },
+        {
+          "tMs": 3004.520125,
+          "rssMb": 111.34,
+          "heapUsedMb": 16.83,
+          "received": 5800
+        },
+        {
+          "tMs": 4005.606292,
+          "rssMb": 118.31,
+          "heapUsedMb": 19.75,
+          "received": 7800
+        },
+        {
+          "tMs": 5006.165749999999,
+          "rssMb": 121.91,
+          "heapUsedMb": 22.81,
+          "received": 9700
+        },
+        {
+          "tMs": 6006.695957999999,
+          "rssMb": 124.88,
+          "heapUsedMb": 6.87,
+          "received": 11600
+        },
+        {
+          "tMs": 7008.492499999999,
+          "rssMb": 124.91,
+          "heapUsedMb": 8.86,
+          "received": 13500
+        },
+        {
+          "tMs": 8010.186291999999,
+          "rssMb": 124.91,
+          "heapUsedMb": 11.76,
+          "received": 15400
+        },
+        {
+          "tMs": 9010.673292000001,
+          "rssMb": 124.95,
+          "heapUsedMb": 14.66,
+          "received": 17400
+        },
+        {
+          "tMs": 10011.799833000001,
+          "rssMb": 124.94,
+          "heapUsedMb": 17.71,
+          "received": 19300
+        },
+        {
+          "tMs": 10019.30925,
+          "rssMb": 124.98,
+          "heapUsedMb": 17.71,
+          "received": 19300
+        }
+      ],
+      "rssSlopeMbPerSec": 2.404003064659954,
+      "rssFirstMb": 103.28,
+      "rssLastMb": 124.94,
+      "totalEvents": 19300
+    }
+  }
+}

@@ -37,13 +37,11 @@ import {
   Layer,
   Schema,
 } from "effect";
-import {
-  buildSchema as gqlBuildSchema,
-  execute,
-  parse,
-  printSchema,
-  type GraphQLNamedType,
-} from "graphql";
+import { buildSchemaSync as gqlBuildSchema } from "./alembic-graphql/utilities/build-ast-schema.ts";
+import { executePromise as execute } from "./test-utils/execute-promise.ts";
+import { parseSync as parse } from "./alembic-graphql/language/parser.ts";
+import { printSchema } from "./alembic-graphql/utilities/print-schema.ts";
+import type { GraphQLNamedType } from "./alembic-graphql/type/definition.ts";
 import {
   Connection,
   Node,
@@ -51,12 +49,12 @@ import {
   field,
   queryField,
 } from "./builder.ts";
-import { buildSchema } from "./http.ts";
+import { buildSchema } from "./transport/http.ts";
 import {
   decodeGlobalId,
   encodeGlobalId,
   InvalidGlobalIdError,
-} from "./relay.ts";
+} from "./relay/core.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -208,7 +206,7 @@ test("property: printSchema → buildSchema preserves named user types", () => {
         b: queryField(B, { resolve: () => Effect.succeed(null as unknown as B) }),
       });
       const SchemaLayer = Layer.mergeAll(ANode, BNode, QueryLayer);
-      const built = buildSchema(SchemaLayer, null);
+      const built = buildSchema(SchemaLayer);
       const sdl = printSchema(built);
 
       // Re-parse via graphql-js's buildSchema — proves the SDL is well-formed
@@ -241,7 +239,7 @@ test("property: printSchema → buildSchema preserves named user types", () => {
  * structurally identical. We canonicalize by extracting a sorted JSON shape.
  *
  * Cite: GraphQL `printSchema` writes types in declaration order
- * (graphql-js@16 src/utilities/printSchema.ts; behavior unchanged across
+ * (graphql-js@16 src/utilities/print-schema.ts; behavior unchanged across
  * the v16 minor line). We don't rely on that — we hash a sorted shape.
  */
 const canonicalizeSDL = (sdl: string): string => {
@@ -296,7 +294,7 @@ test("property: Layer.mergeAll order independence (lowered SDL identical)", () =
         };
 
         // `Layer.mergeAll` expects a non-empty tuple of `Layer<never, any, any>`
-        // (Layer.d.ts:1111 — `<[Layer, ...Layer[]]>`), not a spread of an
+        // (layer.d.ts:1111 — `<[Layer, ...Layer[]]>`), not a spread of an
         // arbitrary-length array. We chain `Layer.merge` instead.
         const mergeArr = (
           xs: ReadonlyArray<Layer.Layer<never, never, never>>,
@@ -308,10 +306,7 @@ test("property: Layer.mergeAll order independence (lowered SDL identical)", () =
 
         const a = make();
         const sdlA = printSchema(
-          buildSchema(
-            mergeArr([...a.layers.map((l) => l.layer), a.queryLayer]),
-            null,
-          ),
+          buildSchema(mergeArr([...a.layers.map((l) => l.layer), a.queryLayer])),
         );
 
         const b = make();
@@ -321,7 +316,6 @@ test("property: Layer.mergeAll order independence (lowered SDL identical)", () =
               ...b.layers.slice().reverse().map((l) => l.layer),
               b.queryLayer,
             ]),
-            null,
           ),
         );
 
@@ -359,7 +353,7 @@ test("property: Connection-returning fields auto-inject first/last/after/before"
         }),
       });
 
-      const sdl = printSchema(buildSchema(Layer.mergeAll(ItemNode, QueryLayer), null));
+      const sdl = printSchema(buildSchema(Layer.mergeAll(ItemNode, QueryLayer)));
       // All four pagination args present on the field.
       return (
         /items\([^)]*first:\s*Int/s.test(sdl) &&
@@ -416,7 +410,7 @@ test("property: bare Schema.String fields read parent[fieldName]", async () => {
               Effect.succeed(new Bag({ id: "1", a: vals.a, b: vals.b, c: vals.c })),
           }),
         });
-        const schema = buildSchema(Layer.mergeAll(BagNode, QueryLayer), null);
+        const schema = buildSchema(Layer.mergeAll(BagNode, QueryLayer));
         const result = await execute({
           schema,
           document: parse(`{ bag { a b c } }`),
@@ -465,7 +459,7 @@ test("property: Effect.fail surfaces in errors[] with correct path", async () =>
           }),
         });
 
-        const schema = buildSchema(Layer.mergeAll(BoomNode, QueryLayer), null);
+        const schema = buildSchema(Layer.mergeAll(BoomNode, QueryLayer));
         const result = await execute({
           schema,
           document: parse(`{ boom { label } }`),

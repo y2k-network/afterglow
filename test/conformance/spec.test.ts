@@ -17,11 +17,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   GraphQLObjectType,
   GraphQLNonNull,
-  Kind,
-  parse,
-  validate,
-  type GraphQLSchema,
-} from "graphql";
+} from "../../src/alembic-graphql/type/definition.ts";
+import { Kind } from "../../src/alembic-graphql/language/kinds.ts";
+import { parseSync as parse } from "../../src/alembic-graphql/language/parser.ts";
+import { validateSync as validate } from "../../src/alembic-graphql/validation/validate.ts";
+import type { GraphQLSchema } from "../../src/alembic-graphql/type/schema.ts";
 import {
   buildLettersSchema,
   runDocument,

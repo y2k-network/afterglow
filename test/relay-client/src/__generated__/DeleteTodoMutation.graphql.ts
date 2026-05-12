@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<eaec1a82570836d2dbd011f59b87478d>>
+ * @generated SignedSource<<b1673725986d9deca17d697ef5e28a7e>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -73,16 +73,16 @@ return {
     ]
   },
   "params": {
-    "cacheID": "258b5d6c30964f9dca18c57f7a8da85e",
+    "cacheID": "7589b35d34e0635b238087902f8b9bba",
     "id": null,
     "metadata": {},
     "name": "DeleteTodoMutation",
     "operationKind": "mutation",
-    "text": "mutation DeleteTodoMutation(\n  $id: String!\n) {\n  deleteTodo(id: $id)\n}\n"
+    "text": "mutation DeleteTodoMutation(\n  $id: ID!\n) {\n  deleteTodo(id: $id)\n}\n"
   }
 };
 })();
 
-(node as any).hash = "d2c3c3edad609053c733d974efa1ea5d";
+(node as any).hash = "062d6e855f84b79cf676b9c452e40221";
 
 export default node;

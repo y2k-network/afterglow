@@ -3,7 +3,7 @@
  *
  * Each `*.layer(...)` returns a `Layer<never, never, R>`:
  *   - `ROut = never` because `Layer.mergeAll` constrains every input to
- *     `Layer<never, any, any>` (`Layer.d.ts:1111`).
+ *     `Layer<never, any, any>` (`layer.d.ts:1111`).
  *   - `R` is the union of resolver service requirements, inferred from the
  *     Effect.gen bodies passed in `load` / `viewer` / `resolve` / `stream`.
  *   - The IR fragment for each layer is captured in the module-internal
@@ -24,11 +24,12 @@ import {
   Stream,
   type Context,
 } from "effect";
-import { decodeGlobalId, encodeGlobalId } from "./relay.ts";
+import { decodeGlobalId, encodeGlobalId } from "./relay/core.ts";
+import type { GraphQLResolveInfo } from "./alembic-graphql/type/definition.ts";
 import {
   connectionEdge as connectionEdgeFn,
   deletedId as deletedIdFn,
-} from "./mutation-shapes.ts";
+} from "./relay/mutations.ts";
 import type {
   IRConnectionFragment,
   IRFieldDef,
@@ -61,11 +62,44 @@ import type {
 } from "./types.ts";
 
 // ---------------------------------------------------------------------------
-// ID — the singleton sentinel for `id: ID!` fields.
+// ID — the singleton sentinel for `id: ID!` output fields.
 // ---------------------------------------------------------------------------
 
 const ID_TAG = Symbol("v2/id");
 export const ID: IDMarker = Object.freeze({ [ID_TAG]: "ID" }) as unknown as IDMarker;
+
+// ---------------------------------------------------------------------------
+// GraphQL.id(NodeClass?) — typed Relay global-id argument.
+//
+// Wire type is `ID!`. Framework decodes the global id before the resolver
+// runs; the resolver receives the raw id (a `string`). When passed a node
+// class, the framework also verifies the decoded `__typename` matches —
+// callers don't have to remember to check.
+//
+//   args: { id: GraphQL.id(Todo) }
+//   resolve: (_, { id }) => store.delete(id)   // id is the raw "1", not "VG9kbzox"
+//
+// Equivalent to running `parseGlobalId(args.id)` plus a typename check —
+// just done once by the framework before the resolver fires, with a
+// consistent error shape.
+// ---------------------------------------------------------------------------
+
+interface GlobalIdArgShape {
+  readonly schema: Schema.Top;
+  readonly description?: string;
+  readonly globalId: { readonly expectedTypename: string | null };
+}
+
+export function id(node: SchemaClass<unknown>): GlobalIdArgShape;
+export function id(): GlobalIdArgShape;
+export function id(node?: SchemaClass<unknown>): GlobalIdArgShape {
+  const expectedTypename =
+    node !== undefined ? classIdentifier(node) : null;
+  return {
+    schema: Schema.String as Schema.Top,
+    globalId: { expectedTypename },
+  };
+}
 
 const isEffect = Effect.isEffect;
 
@@ -143,7 +177,7 @@ type WithResolver<TParent, S extends Schema.Top> = S & {
  * `Schema.Top`.
  */
 export function resolve<TParent, S extends Schema.Top>(
-  fn: (parent: TParent) => S["Type"] | Effect.Effect<S["Type"], any, any>,
+  fn: (parent: TParent) => S["Type"] | Effect.Effect<S["Type"], unknown, any>,
 ): (self: S) => WithResolver<TParent, S> {
   return (self) => {
     // Clone-with-annotation: we don't want to mutate the user's schema. The
@@ -184,7 +218,7 @@ export function field<TParent, T, R = never>(
     readonly resolve: (
       parent: TParent,
       args: PaginationArgs,
-    ) => Effect.Effect<ConnectionPayload<T>, any, R> | ConnectionPayload<T>;
+    ) => Effect.Effect<ConnectionPayload<T>, unknown, R> | ConnectionPayload<T>;
   },
 ): FieldDef<TParent, R>;
 export function field<TParent, T, R = never, A extends ArgDefs | undefined = undefined>(
@@ -320,7 +354,7 @@ const classIdentifier = (cls: SchemaClass<unknown>): string => {
   const name = (cls as { identifier?: unknown }).identifier;
   if (typeof name !== "string") {
     throw new Error(
-      "@athanor/alembic: GraphQL.Node.layer / Connection.layer require a Schema.Class — `(cls as any).identifier` was not a string.",
+      "@athanor/alembic: GraphQL.Node.layer / Connection.layer require a Schema.Class — the class identifier was not a string.",
     );
   }
   return name;
@@ -435,10 +469,20 @@ const makeResolveFromUserFn = (
   };
 };
 
-const argsToIR = (args: ArgDefs): Record<string, { schema: Schema.Top; description?: string }> => {
-  const out: Record<string, { schema: Schema.Top; description?: string }> = {};
+const argsToIR = (
+  args: ArgDefs,
+): Record<string, IRArgDefShape> => {
+  const out: Record<string, IRArgDefShape> = {};
   for (const [name, def] of Object.entries(args)) {
     if (def === null || def === undefined) continue;
+    // GraphQL.ID singleton — wire `ID!`, auto-decode global id, no typename pin.
+    if (typeof def === "object" && (def as Record<string | symbol, unknown>)[ID_TAG] === "ID") {
+      out[name] = {
+        schema: Schema.String as Schema.Top,
+        globalId: { expectedTypename: null },
+      };
+      continue;
+    }
     // Schema.Class is a function with a static `ast` — treat the class itself
     // as a Schema.Top.
     if ((typeof def === "object" || typeof def === "function") && "ast" in (def as object)) {
@@ -446,12 +490,25 @@ const argsToIR = (args: ArgDefs): Record<string, { schema: Schema.Top; descripti
       continue;
     }
     if (typeof def === "object" && "schema" in (def as object)) {
-      const a = def as { schema: Schema.Top; description?: string };
-      out[name] = a.description !== undefined ? { schema: a.schema, description: a.description } : { schema: a.schema };
+      const a = def as {
+        readonly schema: Schema.Top;
+        readonly description?: string;
+        readonly globalId?: { readonly expectedTypename: string | null };
+      };
+      const ir: IRArgDefShape = { schema: a.schema };
+      if (a.description !== undefined) (ir as { description?: string }).description = a.description;
+      if (a.globalId !== undefined) (ir as { globalId?: { expectedTypename: string | null } }).globalId = a.globalId;
+      out[name] = ir;
     }
   }
   return out;
 };
+
+interface IRArgDefShape {
+  readonly schema: Schema.Top;
+  readonly description?: string;
+  readonly globalId?: { readonly expectedTypename: string | null };
+}
 
 // ---------------------------------------------------------------------------
 // Node.layer
@@ -498,7 +555,7 @@ export interface FieldHelper<T> {
       readonly resolve: (
         parent: T,
         args: PaginationArgs,
-      ) => Effect.Effect<ConnectionPayload<Type>, any, R> | ConnectionPayload<Type>;
+      ) => Effect.Effect<ConnectionPayload<Type>, unknown, R> | ConnectionPayload<Type>;
     },
   ): FieldDef<T, R>;
   <Type, R = never, A extends ArgDefs | undefined = undefined>(
@@ -513,7 +570,7 @@ export interface FieldHelper<T> {
 /**
  * `GraphQL.Node.layer(User)({...})` is curried so TypeScript can pin the
  * parent type `T` for every field's resolver. Effect itself uses the same
- * idiom (`Layer.effect(Tag)(effect)` — `Layer.d.ts:941`).
+ * idiom (`Layer.effect(Tag)(effect)` — `layer.d.ts:941`).
  *
  * The `fields:` slot is a CALLBACK that receives a `FieldHelper<T>`, not a
  * plain object. Why: TypeScript's contextual typing reliably flows into a
@@ -528,8 +585,7 @@ export interface FieldHelper<T> {
  *     `FieldHelper<User>`, not by ambient contextual typing
  *
  * Bare `Schema.Top` (passthrough) and `Schema.Top.pipe(GraphQL.resolve(fn))`
- * still work in the same slot — the callback returns a `Record<string,
- * NodeFieldOutput<T>>` and both are valid `NodeFieldOutput<T>` shapes.
+ * still work in the same slot; both are valid field output shapes.
  */
 export const Node = {
   layer<T>(cls: SchemaClass<T>) {
@@ -537,7 +593,7 @@ export const Node = {
     return <RLoad = never, RFields = never>(
       config: {
         readonly fields?: (f: FieldHelper<T>) => Record<string, NodeFieldOutput<T>>;
-        readonly load: (id: string) => Effect.Effect<T | null, any, RLoad>;
+        readonly load: (id: string) => Effect.Effect<T | null, unknown, RLoad>;
         readonly description?: string;
       },
     ): Layer.Layer<never, never, RLoad | RFields> => {
@@ -631,7 +687,7 @@ export const Viewer = {
   layer<TParent, RResolve = never, RFields = never>(
     config: {
       readonly fields?: (f: FieldHelper<TParent>) => Record<string, NodeFieldOutput<TParent>>;
-      readonly resolve: () => Effect.Effect<TParent, any, RResolve>;
+      readonly resolve: () => Effect.Effect<TParent, unknown, RResolve>;
       readonly description?: string;
     },
   ): Layer.Layer<never, never, RFields | RResolve> {
@@ -760,7 +816,8 @@ export function queryField<T, R = never>(
     readonly resolve: (
       root: unknown,
       args: PaginationArgs,
-    ) => Effect.Effect<ConnectionPayload<T>, any, R>;
+      info: GraphQLResolveInfo,
+    ) => Effect.Effect<ConnectionPayload<T>, unknown, R>;
   },
 ): QueryFieldDef<R>;
 export function queryField<T, A extends ArgDefs | undefined, R = never>(
@@ -773,7 +830,8 @@ export function queryField<T, A extends ArgDefs | undefined, R = never>(
     readonly resolve: (
       root: unknown,
       args: A extends ArgDefs ? ArgsShape<A> : {},
-    ) => Effect.Effect<T, any, R>;
+      info: GraphQLResolveInfo,
+    ) => Effect.Effect<T, unknown, R>;
   },
 ): QueryFieldDef<R>;
 export function queryField(
@@ -806,7 +864,8 @@ export function mutationField<O, I, A extends ArgDefs | undefined = undefined, R
     readonly resolve: (
       root: unknown,
       args: (A extends ArgDefs ? ArgsShape<A> : {}) & { readonly input: I },
-    ) => Effect.Effect<O, any, R>;
+      info: GraphQLResolveInfo,
+    ) => Effect.Effect<O, unknown, R>;
   },
 ): MutationFieldDef<R>;
 export function mutationField<O, A extends ArgDefs | undefined = undefined, R = never>(
@@ -819,7 +878,8 @@ export function mutationField<O, A extends ArgDefs | undefined = undefined, R = 
     readonly resolve: (
       root: unknown,
       args: A extends ArgDefs ? ArgsShape<A> : {},
-    ) => Effect.Effect<O, any, R>;
+      info: GraphQLResolveInfo,
+    ) => Effect.Effect<O, unknown, R>;
   },
 ): MutationFieldDef<R>;
 export function mutationField(options: any): MutationFieldDef<any> {
@@ -854,9 +914,10 @@ export function subscriptionField<T, A extends ArgDefs | undefined, R = never>(
     readonly stream: (
       root: unknown,
       args: A extends ArgDefs ? ArgsShape<A> : {},
+      info: GraphQLResolveInfo,
     ) =>
-      | Stream.Stream<T, any, R>
-      | Effect.Effect<Stream.Stream<T, any, R>, any, R>;
+      | Stream.Stream<T, unknown, R>
+      | Effect.Effect<Stream.Stream<T, unknown, R>, unknown, R>;
   },
 ): SubscriptionFieldDef<R> {
   const raw: SubFieldRaw = {
@@ -1010,8 +1071,23 @@ export const globalId = (typename: string, id: string): string =>
 export const parseGlobalId = (id: string): { typename: string; id: string } =>
   decodeGlobalId(id);
 
-export const deletedId = (typename: string, id: string): string =>
-  deletedIdFn(typename, id);
+/**
+ * Re-encode a deleted record's raw id back to a global id, suitable for the
+ * `deletedId: ID!` Relay mutation payload. Accepts either the Schema.Class
+ * (typename derived) or the typename string directly.
+ */
+export function deletedId(node: SchemaClass<unknown>, rawId: string): string;
+export function deletedId(typename: string, rawId: string): string;
+export function deletedId(
+  nodeOrTypename: SchemaClass<unknown> | string,
+  rawId: string,
+): string {
+  const typename =
+    typeof nodeOrTypename === "string"
+      ? nodeOrTypename
+      : classIdentifier(nodeOrTypename);
+  return deletedIdFn(typename, rawId);
+}
 
 export const edgePayload = <T>(
   cursor: string,

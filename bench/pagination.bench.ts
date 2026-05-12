@@ -6,9 +6,10 @@
  * resolver fan-out (`edges[].cursor`, `edges[].node.id`, `edges[].node.title`).
  */
 import { Context, Effect, Layer, Schema } from "effect";
-import { execute, parse } from "graphql";
+import { executePromise as execute } from "../src/test-utils/execute-promise.ts";
+import { parseSync as parse } from "../src/alembic-graphql/language/parser.ts";
 import { GraphQL, executeBfs } from "../src/index.ts";
-import { buildSchema } from "../src/http.ts";
+import { buildSchema } from "../src/transport/http.ts";
 import { benchAsync, formatResult, loadResults, saveResults, type BenchResult } from "./harness.ts";
 
 const TOTAL = 1000;
@@ -46,7 +47,7 @@ const QueryLayer = GraphQL.Query.layer({
   }),
 });
 
-const schema = buildSchema(Layer.mergeAll(ItemNode, QueryLayer), null);
+const schema = buildSchema(Layer.mergeAll(ItemNode, QueryLayer));
 const doc = parse(`{
   items(first: ${PAGE}) {
     edges { cursor node { id title } }
@@ -64,11 +65,11 @@ export const main = async (): Promise<BenchResult[]> => {
     }),
   );
   results.push(
-    await benchAsync(`connection page first:${PAGE} of ${TOTAL} / bfs`, () =>
-      executeBfs({ schema, document: doc, contextValue: EMPTY_CTX }).then((r) => {
+    await benchAsync(`connection page first:${PAGE} of ${TOTAL} / bfs`, async () => {
+      const r = await Effect.runPromise(executeBfs({ schema, document: doc, contextValue: EMPTY_CTX }));
         if (r.errors) throw new Error(JSON.stringify(r));
         return r;
-      }),
+      },
     ),
   );
   return results;

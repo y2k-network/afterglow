@@ -12,7 +12,7 @@
  *    pagination injection at lower-time
  */
 import type { Context, Effect, Schema, Stream } from "effect";
-import type { GraphQLResolveInfo } from "graphql";
+import type { GraphQLResolveInfo } from "./alembic-graphql/type/definition.ts";
 
 // ---------------------------------------------------------------------------
 // Output type references — the lower-time descriptor of a field's return type.
@@ -35,6 +35,15 @@ export type IROutputType =
 export interface IRArgDef {
   readonly schema: Schema.Top;
   readonly description?: string;
+  /**
+   * When present, the argument is a Relay global id. The wire type is `ID`
+   * (not `String`); the runtime decodes the value before the resolver runs
+   * and, if `expectedTypename` is non-null, verifies the decoded `__typename`
+   * matches.
+   */
+  readonly globalId?: {
+    readonly expectedTypename: string | null;
+  };
 }
 
 export interface IRFieldDef {
@@ -93,7 +102,7 @@ export interface IRNodeFragment {
  * (`type Viewer { ... }`, no `implements Node`).
  *
  * Mirrors Effect's `HttpApi` framework-owned-container pattern: the type name
- * and shape (Viewer + Query.viewer) belong to @athanor/alembic; users compose
+ * and shape (Viewer + Query.viewer) belong to \@athanor/alembic; users compose
  * fields and a parent-resolver into it via this single canonical surface.
  */
 export interface IRViewerFragment {

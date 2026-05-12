@@ -13,10 +13,14 @@ import {
   ManagedRuntime,
   Ref,
   Schema,
+  Stream,
 } from "effect";
-import { execute, parse, printSchema } from "graphql";
+import { executePromise as execute } from "./test-utils/execute-promise.ts";
+import { parseSync as parse } from "./alembic-graphql/language/parser.ts";
+import { subscribe } from "./alembic-graphql/execution/subscribe.ts";
+import { printSchema } from "./alembic-graphql/utilities/print-schema.ts";
 import { GraphQL } from "./index.ts";
-import { buildSchema } from "./http.ts";
+import { buildSchema } from "./transport/http.ts";
 import { Node, Query, Mutation, Connection, Subscription, Viewer, queryField, mutationField, subscriptionField, field, resolve, ID, Scalar, globalId, parseGlobalId, deletedId, toConnection } from "./builder.ts";
 
 // ---------------------------------------------------------------------------
@@ -227,7 +231,8 @@ test("smoke: build schema and run a query", async () => {
 
   const SchemaLayer = Layer.mergeAll(TodoNode, QueryLayer);
   const runtime = ManagedRuntime.make(TodoStoreLive);
-  const schema = buildSchema(SchemaLayer, runtime);
+  const schema = buildSchema(SchemaLayer);
+  const contextValue = await runtime.context();
 
   const sdl = printSchema(schema);
   expect(sdl).toContain("type TodoT implements Node");
@@ -237,7 +242,7 @@ test("smoke: build schema and run a query", async () => {
   const result = await execute({
     schema,
     document: parse("{ todoCount }"),
-    contextValue: Context.empty(),
+    contextValue: contextValue,
   });
   expect(result.errors).toBeUndefined();
   expect(result.data).toEqual({ todoCount: 2 });
@@ -265,13 +270,14 @@ test("smoke: node(id) returns the loaded entity", async () => {
 
   const SchemaLayer = Layer.mergeAll(TodoNode, QueryLayer);
   const runtime = ManagedRuntime.make(TodoStoreLive);
-  const schema = buildSchema(SchemaLayer, runtime);
+  const schema = buildSchema(SchemaLayer);
+  const contextValue = await runtime.context();
 
   const gid = globalId("TodoT", "1");
   const result = await execute({
     schema,
     document: parse(`{ node(id: "${gid}") { ... on TodoT { id title } } }`),
-    contextValue: Context.empty(),
+    contextValue: contextValue,
   });
   expect(result.errors).toBeUndefined();
   expect(result.data).toEqual({ node: { id: gid, title: "Read" } });
@@ -311,7 +317,8 @@ test("smoke: Connection auto-registers; no Connection.layer() call needed", asyn
 
   const SchemaLayer = Layer.mergeAll(TodoNode, QueryLayer);
   const runtime = ManagedRuntime.make(TodoStoreLive);
-  const schema = buildSchema(SchemaLayer, runtime);
+  const schema = buildSchema(SchemaLayer);
+  const contextValue = await runtime.context();
 
   const sdl = printSchema(schema);
   expect(sdl).toContain("type TodoTConnection");
@@ -321,7 +328,7 @@ test("smoke: Connection auto-registers; no Connection.layer() call needed", asyn
   const result = await execute({
     schema,
     document: parse(`{ todos(first: 1) { edges { node { title } cursor } pageInfo { hasNextPage } } }`),
-    contextValue: Context.empty(),
+    contextValue: contextValue,
   });
   expect(result.errors).toBeUndefined();
   expect((result.data as any).todos.edges).toHaveLength(1);
@@ -369,7 +376,7 @@ test("smoke: mutation with input + deletedId helper", async () => {
   });
 
   const SchemaLayer = Layer.mergeAll(TodoNode, QueryLayer, MutationLayer);
-  const schema = buildSchema(SchemaLayer, null);
+  const schema = buildSchema(SchemaLayer);
 
   const sdl = printSchema(schema);
   expect(sdl).toContain("type Mutation");
@@ -407,7 +414,7 @@ test("smoke: custom scalar via GraphQL.Scalar", async () => {
   });
 
   const SchemaLayer = Layer.mergeAll(EventNode, QueryLayer);
-  const schema = buildSchema(SchemaLayer, null);
+  const schema = buildSchema(SchemaLayer);
 
   const sdl = printSchema(schema);
   expect(sdl).toContain("scalar HarnessDate");
@@ -426,7 +433,7 @@ test("smoke: GraphQL.Viewer.layer synthesizes plain type Viewer (no Node, no aut
   });
 
   const SchemaLayer = Layer.mergeAll(ViewerLayer);
-  const schema = buildSchema(SchemaLayer, null);
+  const schema = buildSchema(SchemaLayer);
 
   const sdl = printSchema(schema);
   expect(sdl).toContain("viewer: Viewer");
@@ -461,7 +468,7 @@ test("smoke: GraphQL.Viewer.layer parent type flows from resolve into fields", a
   });
 
   const SchemaLayer = Layer.mergeAll(ViewerLayer);
-  const schema = buildSchema(SchemaLayer, null);
+  const schema = buildSchema(SchemaLayer);
 
   const result = await execute({
     schema,
@@ -476,7 +483,7 @@ test("smoke: registering Viewer.layer twice fails at schema-build", () => {
   const V1 = Viewer.layer({ resolve: () => Effect.succeed({ userId: "x" }) });
   const V2 = Viewer.layer({ resolve: () => Effect.succeed({ userId: "y" }) });
   const SchemaLayer = Layer.mergeAll(V1, V2);
-  expect(() => buildSchema(SchemaLayer, null)).toThrow(
+  expect(() => buildSchema(SchemaLayer)).toThrow(
     /GraphQL\.Viewer\.layer was registered twice/,
   );
 });
@@ -504,7 +511,7 @@ test("smoke: pipe-resolver shorthand executes at runtime", async () => {
   });
 
   const SchemaLayer = Layer.mergeAll(PersonNode, QueryLayer);
-  const schema = buildSchema(SchemaLayer, null);
+  const schema = buildSchema(SchemaLayer);
 
   const result = await execute({
     schema,
@@ -544,7 +551,7 @@ test("smoke: missing-fragment error message names the type and the fix", () => {
   });
   void ItemNode;
   const SchemaLayer = Layer.mergeAll(BadNode);
-  expect(() => buildSchema(SchemaLayer, null)).toThrow(/Add the layer that defines Ghost/);
+  expect(() => buildSchema(SchemaLayer)).toThrow(/Add the layer that defines Ghost/);
 });
 
 test("smoke: full integration — viewer + connection + mutation with per-request CurrentUser", async () => {
@@ -646,12 +653,11 @@ test("smoke: full integration — viewer + connection + mutation with per-reques
   void _a;
 
   const runtime = ManagedRuntime.make(TodoStoreV2Live);
-  const schema = buildSchema(SchemaLayer, runtime);
+  const schema = buildSchema(SchemaLayer);
+  const baseCtx = await runtime.context();
 
-  // Provide CurrentUserSvc per-request via Context for execute()
-  const ctx = Context.empty().pipe(
-    (c) => Context.add(c, CurrentUserSvc, { id: "alice" } as any),
-  );
+  // Add the per-request CurrentUserSvc on top of the server-scoped context.
+  const ctx = Context.add(baseCtx, CurrentUserSvc, { id: "alice" } as any);
 
   const r1 = await execute({
     schema,
@@ -672,7 +678,54 @@ test("smoke: full integration — viewer + connection + mutation with per-reques
   await runtime.dispose();
 });
 
+test("smoke: subscriptionField streams with Effect services and resolver info", async () => {
+  class SubscriptionService extends Context.Service<SubscriptionService, {
+    readonly label: string;
+  }>()("SubscriptionService") {}
+
+  const SubscriptionServiceLive = Layer.succeed(SubscriptionService, {
+    label: "service",
+  });
+
+  const QueryLayer = Query.layer({
+    healthcheck: queryField(Schema.Boolean, {
+      resolve: () => Effect.succeed(true),
+    }),
+  });
+
+  const SubscriptionLayer = Subscription.layer({
+    tick: subscriptionField(Schema.String, {
+      stream: (_root, _args, info) =>
+        Effect.gen(function* () {
+          const service = yield* SubscriptionService;
+          return Stream.make(`${service.label}:${info.fieldName}`);
+        }),
+    }),
+  });
+
+  const runtime = ManagedRuntime.make(SubscriptionServiceLive);
+  const schema = buildSchema(Layer.mergeAll(QueryLayer, SubscriptionLayer));
+  const contextValue = await runtime.context();
+
+  const result = await Effect.runPromise(
+    subscribe({
+      schema,
+      document: parse("subscription { tick }"),
+      contextValue,
+    }),
+  );
+
+  expect(Stream.isStream(result)).toBe(true);
+  const values = await Effect.runPromise(
+    Stream.runCollect(result as Stream.Stream<unknown>),
+  );
+
+  expect(JSON.parse(JSON.stringify(values))).toEqual([
+    { data: { tick: "service:tick" } },
+  ]);
+
+  await runtime.dispose();
+});
+
 // Avoid "no test" unused-imports
-void Subscription;
-void subscriptionField;
 void GraphQL;

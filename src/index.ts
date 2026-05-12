@@ -30,6 +30,7 @@ export {
   edgePayload,
   field,
   globalId,
+  id,
   mutationField,
   parseGlobalId,
   queryField,
@@ -38,8 +39,8 @@ export {
   toConnection,
 } from "./builder.ts";
 
-export { buildSchema, toHttpApp, type ToHttpAppOptions } from "./http.ts";
-export { toWebSocketApp, type ToWebSocketAppOptions, type ToWebSocketAppResult } from "./ws.ts";
+export { buildSchema, toHttpApp, type ToHttpAppOptions } from "./transport/http.ts";
+export { toWebSocketApp, type ToWebSocketAppOptions } from "./transport/ws.ts";
 
 // Type re-exports for users who want to spell types explicitly.
 export type {
@@ -66,7 +67,7 @@ export {
   UUIDScalar,
   standardScalarTypes,
   standardSchemas,
-} from "./standard-scalars.ts";
+} from "./scalars.ts";
 
 // Relay directive declarations + helpers (callable from custom transports
 // or for printing schemas with the full directive set).
@@ -99,22 +100,22 @@ export {
   throwOnFieldErrorDirective,
   updatableDirective,
   waterfallDirective,
-} from "./relay-directives.ts";
-export { matchable } from "./relay-3d.ts";
+} from "./relay/directives.ts";
+export { matchable } from "./relay/three-d.ts";
 
 // Lower-level escape hatches (custom transports, schema introspection).
-export { lower, type LowerOptions } from "./lower.ts";
-export { executeBfs, type BfsExecuteArgs } from "./executor-bfs.ts";
+export { lower, type LowerOptions } from "./schema/compile.ts";
+export { executeBfs, type BfsExecuteArgs } from "./runtime/executor.ts";
 
 // SDL printer that preserves field-level directive applications (e.g.
 // @semanticNonNull) attached on `GraphQLField.astNode.directives`.
-export { printSchemaWithDirectives, type PrintSchemaOptions } from "./print-sdl.ts";
+export { printSchemaWithDirectives, type PrintSchemaOptions } from "./schema/print-sdl.ts";
 
 // Build-time schema linter (Relay anti-pattern detection).
-export { lintSchema, type LintIssue } from "./lint.ts";
+export { lintSchema, type LintIssue } from "./schema/lint.ts";
 
 // Global ID helpers (encode/decode are aliased as globalId/parseGlobalId).
-export { decodeGlobalId, encodeGlobalId, InvalidGlobalIdError } from "./relay.ts";
+export { decodeGlobalId, encodeGlobalId, InvalidGlobalIdError } from "./relay/core.ts";
 
 /**
  * Annotate a Schema.Class as a GraphQL input type. Equivalent to attaching the

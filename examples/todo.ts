@@ -13,7 +13,7 @@
  *  - `GraphQL.Viewer.layer({...})` — Relay's canonical `Query.viewer { ... }`,
  *    a framework-owned `type Viewer { ... }` synthesized at build time.
  *    Viewer is NOT a Node implementor; @refetchable re-calls Query.viewer.
- *  - `Context.Service` + `ManagedRuntime` for server-scoped DI (TodoStore).
+ *  - `Context.Service` + a `Layer` for server-scoped DI (TodoStore).
  *  - Per-request services (CurrentUser) derived from the incoming request via
  *    `requestContext` Layer threaded through `GraphQL.toHttpApp`.
  *  - HTTP serving via `Bun.serve()` bridging Web Request/Response into the
@@ -33,7 +33,6 @@ import {
   Context,
   Effect,
   Layer,
-  ManagedRuntime,
   Ref,
   Schema,
 } from "effect";
@@ -76,7 +75,7 @@ export class TodoStore extends Context.Service<TodoStore, {
 
 const cursorOf = (t: Todo): string => Buffer.from(`cursor:${t.id}`).toString("base64");
 
-const TodoStoreLive = Layer.effect(TodoStore)(
+export const TodoStoreLive = Layer.effect(TodoStore)(
   Effect.gen(function* () {
     const todos = yield* Ref.make<ReadonlyArray<Todo>>([
       new Todo({
@@ -241,18 +240,18 @@ const MutationLayer = GraphQL.Mutation.layer({
       }),
   }),
   deleteTodo: GraphQL.mutationField({
-    args: { id: Schema.String },
+    // `id: GraphQL.ID` declares a wire-`ID!` argument. The framework decodes
+    // the global id and the resolver receives the raw id directly — no manual
+    // parseGlobalId. Symmetric with `id` on Node-implementing output types,
+    // which the framework auto-encodes on the way out.
+    args: { id: GraphQL.ID },
     output: GraphQL.ID,
     nonNull: true,
     resolve: (_root, args) =>
       Effect.gen(function* () {
         const store = yield* TodoStore;
-        // Wire id is the global id — strip the typename prefix before hitting
-        // the store. parseGlobalId throws on malformed input; the throw
-        // surfaces as a GraphQL field error.
-        const { id: rawId } = GraphQL.parseGlobalId(args.id);
-        yield* store.delete(rawId);
-        return GraphQL.deletedId("Todo", rawId);
+        yield* store.delete(args.id);
+        return GraphQL.deletedId(Todo, args.id);
       }),
   }),
 });
@@ -276,21 +275,32 @@ export const RequestLayer = Layer.effect(CurrentUser)(
 );
 
 // ---- App construction ------------------------------------------------------
+//
+// `toHttpApp(SchemaLayer)` returns an `Effect<HttpServerResponse, never,
+// HttpServerRequest | TodoStore | CurrentUser>`. Services flow through R via
+// the standard Effect seam:
+//   - `TodoStoreLive`             : Layer<TodoStore, never, never>          (server-scoped)
+//   - `RequestLayer` (CurrentUser): Layer<CurrentUser, never, HttpServerRequest> (per-request)
+//
+// Provide both via `Effect.provide` at the mount point. There is no separate
+// `runtime` or `requestContext` option — the framework doesn't pre-bake a
+// ManagedRuntime or split per-request from server-scoped; standard Layer
+// composition handles both.
 
 export const buildApp = () => {
-  const runtime = ManagedRuntime.make(TodoStoreLive);
-  const app = GraphQL.toHttpApp(SchemaLayer, {
-    runtime,
-    requestContext: RequestLayer,
-  });
-  const schema = GraphQL.buildSchema(SchemaLayer, runtime);
-  return { schema, runtime, app };
+  const app = GraphQL.toHttpApp(SchemaLayer);
+  const schema = GraphQL.buildSchema(SchemaLayer);
+  return { schema, app };
 };
 
 // ---- Bun.serve bridge ------------------------------------------------------
 
 const main = async () => {
-  const { app, runtime } = buildApp();
+  const { app } = buildApp();
+  const provided = app.pipe(
+    Effect.provide(TodoStoreLive),
+    Effect.provide(RequestLayer),
+  );
 
   const server = Bun.serve({
     port: 4000,
@@ -300,11 +310,11 @@ const main = async () => {
         return new Response("Not found", { status: 404 });
       }
       const req = HttpServerRequest.fromWeb(request);
-      const provided = Effect.provide(
-        app,
+      const handler = Effect.provide(
+        provided,
         Layer.succeed(HttpServerRequest.HttpServerRequest)(req),
       );
-      const response = await Effect.runPromise(provided);
+      const response = await Effect.runPromise(handler);
       return HttpServerResponse.toWeb(response);
     },
   });
@@ -314,7 +324,6 @@ const main = async () => {
 
   const shutdown = async () => {
     server.stop();
-    await runtime.dispose();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

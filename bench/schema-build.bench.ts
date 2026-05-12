@@ -14,7 +14,7 @@
  */
 import { Effect, Layer, Schema } from "effect";
 import { GraphQL } from "../src/index.ts";
-import { buildSchema } from "../src/http.ts";
+import { buildSchema } from "../src/transport/http.ts";
 import { formatResult, loadResults, saveResults, timeOnce } from "./harness.ts";
 
 const TYPE_COUNT = 100;
@@ -62,7 +62,7 @@ export const main = () => {
   const cold = timeOnce(
     `cold schema build (${TYPE_COUNT} types, ${FIELDS_PER_TYPE} fields each)`,
     () => {
-      buildSchema(buildLayerOnce(spec), null);
+      buildSchema(buildLayerOnce(spec));
     },
     7,
   );
@@ -73,7 +73,7 @@ export const main = () => {
   const warm = timeOnce(
     `warm rebuild (cached layer composition)`,
     () => {
-      buildSchema(reusedLayer, null);
+      buildSchema(reusedLayer);
     },
     7,
   );

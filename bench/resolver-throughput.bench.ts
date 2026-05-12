@@ -11,9 +11,12 @@
  * else `provide` interprets it as a Layer and crashes inside `Layer.build`).
  */
 import { Context, Effect, Layer, Schema } from "effect";
-import { execute, parse, type DocumentNode, type GraphQLSchema } from "graphql";
+import { executePromise as execute } from "../src/test-utils/execute-promise.ts";
+import { parseSync as parse } from "../src/alembic-graphql/language/parser.ts";
+import type { DocumentNode } from "../src/alembic-graphql/language/ast.ts";
+import type { GraphQLSchema } from "../src/alembic-graphql/type/schema.ts";
 import { GraphQL, executeBfs } from "../src/index.ts";
-import { buildSchema } from "../src/http.ts";
+import { buildSchema } from "../src/transport/http.ts";
 import { benchAsync, formatResult, loadResults, saveResults, type BenchResult } from "./harness.ts";
 
 const EMPTY_CTX = Context.empty();
@@ -41,7 +44,7 @@ const buildSingleResolverSchema = () => {
     }),
   });
 
-  return buildSchema(Layer.mergeAll(UserNode, QueryLayer), null);
+  return buildSchema(Layer.mergeAll(UserNode, QueryLayer));
 };
 
 // ---------------------------------------------------------------------------
@@ -88,7 +91,7 @@ const buildSiblingSchema = () => {
     }),
   });
 
-  return buildSchema(Layer.mergeAll(WideRowNode, QueryLayer), null);
+  return buildSchema(Layer.mergeAll(WideRowNode, QueryLayer));
 };
 
 // ---------------------------------------------------------------------------
@@ -143,7 +146,7 @@ const buildNestedSchema = () => {
     }),
   });
 
-  return buildSchema(Layer.mergeAll(QueryLayer, L0, L1, L2, L3, L4, L5, L6, L7, L8, L9), null);
+  return buildSchema(Layer.mergeAll(QueryLayer, L0, L1, L2, L3, L4, L5, L6, L7, L8, L9));
 };
 
 // ---------------------------------------------------------------------------
@@ -158,11 +161,11 @@ const runDefault = (schema: GraphQLSchema, doc: DocumentNode) => async () => {
   return r;
 };
 
-const runBfs = (schema: GraphQLSchema, doc: DocumentNode) => () =>
-  executeBfs({ schema, document: doc, contextValue: EMPTY_CTX }).then((r) => {
+const runBfs = (schema: GraphQLSchema, doc: DocumentNode) => async () => {
+  const r = await Effect.runPromise(executeBfs({ schema, document: doc, contextValue: EMPTY_CTX }));
     if (r.errors) throw new Error(JSON.stringify(r));
     return r;
-  });
+  };
 
 // ---------------------------------------------------------------------------
 // Main

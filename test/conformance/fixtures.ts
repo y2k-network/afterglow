@@ -12,13 +12,14 @@
  */
 import { Context, Effect, Layer, Schema } from "effect";
 import { GraphQL } from "../../src/index.ts";
-import {
-  execute as graphqlExecute,
-  graphql as graphqlEntry,
-  type DocumentNode,
-  type ExecutionResult,
-  type GraphQLSchema,
-} from "graphql";
+import { execute } from "../../src/alembic-graphql/execution/execute.ts";
+import { parseSync } from "../../src/alembic-graphql/language/parser.ts";
+import { validateSync } from "../../src/alembic-graphql/validation/validate.ts";
+import type {
+  ExecutionResult,
+} from "../../src/alembic-graphql/execution/execute.ts";
+import type { DocumentNode } from "../../src/alembic-graphql/language/ast.ts";
+import type { GraphQLSchema } from "../../src/alembic-graphql/type/schema.ts";
 
 // ---------------------------------------------------------------------------
 // Domain types — every conformance scenario references at least one of these.
@@ -180,7 +181,7 @@ export const buildLettersSchema = (
   const SchemaLayer = Layer.mergeAll(LetterNode, QueryLayer);
   // Resolvers in this fixture have R = never, so pass `null` and let the
   // runtime fall back to `Effect.runPromise` — see `src/runtime.ts:57`.
-  const schema = GraphQL.buildSchema(SchemaLayer, null);
+  const schema = GraphQL.buildSchema(SchemaLayer);
   return {
     schema,
     dispose: () => Promise.resolve(),
@@ -198,26 +199,33 @@ export const runQuery = (
   schema: GraphQLSchema,
   source: string,
   variableValues?: Record<string, unknown>,
-): Promise<ExecutionResult> =>
-  Promise.resolve(
-    graphqlEntry({
+): Promise<ExecutionResult> => {
+  const document = parseSync(source);
+  const errors = validateSync(schema, document);
+  if (errors.length > 0) return Promise.resolve({ errors });
+  return Effect.runPromise(
+    execute({
       schema,
-      source,
+      document,
       contextValue: emptyContext(),
       variableValues,
     }),
   );
+};
 
 export const runDocument = (
   schema: GraphQLSchema,
   document: DocumentNode,
   variableValues?: Record<string, unknown>,
-): Promise<ExecutionResult> =>
-  Promise.resolve(
-    graphqlExecute({
+): Promise<ExecutionResult> => {
+  const errors = validateSync(schema, document);
+  if (errors.length > 0) return Promise.resolve({ errors });
+  return Effect.runPromise(
+    execute({
       schema,
       document,
       contextValue: emptyContext(),
       variableValues,
-    }) as ExecutionResult | Promise<ExecutionResult>,
+    }),
   );
+};

@@ -23,10 +23,10 @@ export {
   toConnection,
 } from "./builder.ts";
 
-export { buildSchema, toHttpApp, type ToHttpAppOptions } from "./http.ts";
-export { lintSchema, type LintIssue } from "./lint.ts";
-export { printSchemaWithDirectives, type PrintSchemaOptions } from "./print-sdl.ts";
-export { toWebSocketApp, type ToWebSocketAppOptions, type ToWebSocketAppResult } from "./ws.ts";
+export { buildSchema, toHttpApp, type ToHttpAppOptions } from "./transport/http.ts";
+export { lintSchema, type LintIssue } from "./schema/lint.ts";
+export { printSchemaWithDirectives, type PrintSchemaOptions } from "./schema/print-sdl.ts";
+export { toWebSocketApp, type ToWebSocketAppOptions } from "./transport/ws.ts";
 
 export type {
   ConnectionPayload,

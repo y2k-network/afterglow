@@ -3,7 +3,7 @@
  *
  * Two-stage:
  *   1. `bun build` — bundle the runtime entry into `dist/index.js` (ESM,
- *      externalises `effect` and `graphql` so consumers' versions win).
+ *      externalises `effect` so consumers' versions win).
  *   2. `tsc --project tsconfig.build.json` — emit declaration files into
  *      `dist/` from the same source tree.
  *
@@ -24,7 +24,7 @@ const result = await Bun.build({
   outdir: dist,
   target: "node",
   format: "esm",
-  external: ["effect", "graphql", "effect/*", "graphql/*"],
+  external: ["effect", "effect/*"],
   sourcemap: "linked",
 });
 

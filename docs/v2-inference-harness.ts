@@ -8,14 +8,14 @@
  * @ts-expect-error sites or cause assertion types to fail.
  *
  * Every API called here is cited against node_modules:
- *   Effect.gen              effect/dist/Effect.d.ts:1772
- *   Layer.effect (curried)  effect/dist/Layer.d.ts:941
- *   Layer.mergeAll          effect/dist/Layer.d.ts:1111
- *   Context.Service         effect/dist/Context.d.ts:167
- *   Schema.Class            effect/dist/Schema.d.ts:6677
- *   Schema.DateFromString   effect/dist/Schema.d.ts:5442
- *   ManagedRuntime.make     effect/dist/ManagedRuntime.d.ts:129
- *   Stream                  effect/dist/Stream.d.ts (type)
+ *   Effect.gen              effect/dist/effect.d.ts:1772
+ *   Layer.effect (curried)  effect/dist/layer.d.ts:941
+ *   Layer.mergeAll          effect/dist/layer.d.ts:1111
+ *   Context.Service         effect/dist/context.d.ts:167
+ *   Schema.Class            effect/dist/schema.d.ts:6677
+ *   Schema.DateFromString   effect/dist/schema.d.ts:5442
+ *   ManagedRuntime.make     effect/dist/managed-runtime.d.ts:129
+ *   Stream                  effect/dist/stream.d.ts (type)
  */
 
 import { Context, Effect, Layer, ManagedRuntime, Ref, Schema, Stream } from "effect"
@@ -65,7 +65,7 @@ declare function mutationLayer<R>(
 // Services<Layer.Layer<never, never, R>> = R = union of all resolver requirements.
 
 // ---------------------------------------------------------------------------
-// Domain types (real Schema.Class — verified against Schema.d.ts:6677)
+// Domain types (real Schema.Class — verified against schema.d.ts:6677)
 // ---------------------------------------------------------------------------
 
 class User extends Schema.Class<User>("User")({
@@ -76,11 +76,11 @@ class Todo extends Schema.Class<Todo>("Todo")({
   id: Schema.String,
   title: Schema.String,
   completed: Schema.Boolean,
-  createdAt: Schema.DateFromString, // verified: Schema.d.ts:5442
+  createdAt: Schema.DateFromString, // verified: schema.d.ts:5442
 }) {}
 
 // ---------------------------------------------------------------------------
-// Services (real Context.Service — verified against Context.d.ts:167)
+// Services (real Context.Service — verified against context.d.ts:167)
 // ---------------------------------------------------------------------------
 
 class CurrentUser extends Context.Service<CurrentUser, { readonly id: string }>()(
@@ -154,7 +154,7 @@ const MutationLayer = mutationLayer({
 
 // ---------------------------------------------------------------------------
 // Schema assembly — Layer.mergeAll
-// Verified signature: effect/dist/Layer.d.ts:1111
+// Verified signature: effect/dist/layer.d.ts:1111
 // Returns Layer<Success<Layers[number]>, Error<Layers[number]>, Services<Layers[number]>>
 // = Layer<never, never, CurrentUser | TodoStore | never>
 // = Layer<never, never, CurrentUser | TodoStore>
@@ -229,7 +229,7 @@ declare const TodoStoreLive: Layer.Layer<TodoStore, never, never>
 // The RequestLayer provides CurrentUser
 declare const RequestLayer: Layer.Layer<CurrentUser, never, any>
 
-// Construct the runtime — ManagedRuntime.make verified at ManagedRuntime.d.ts:129
+// Construct the runtime — ManagedRuntime.make verified at managed-runtime.d.ts:129
 const runtime = ManagedRuntime.make(TodoStoreLive)
 
 // Call toHttpApp — TypeScript must verify runtime+requestContext cover SchemaLayerServices

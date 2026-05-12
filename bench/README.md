@@ -105,7 +105,7 @@ invocations):
 can see how many batched callbacks happen per query. We ran the demo
 **twice independently** under mitata to verify reproducibility.
 
-[effect-batched]: ../node_modules/effect/dist/RequestResolver.d.ts
+[effect-batched]: ../node_modules/effect/dist/request-resolver.d.ts
 
 | Executor | Batch callbacks / query | Throughput (run 1) | Throughput (run 2) |
 |---|---:|---:|---:|

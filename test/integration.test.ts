@@ -17,31 +17,24 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
-import {
-  parse,
-  validate,
-  type GraphQLSchema,
-} from "graphql";
+import { parseSync as parse } from "../src/alembic-graphql/language/parser.ts";
+import { validateSync as validate } from "../src/alembic-graphql/validation/validate.ts";
+import type { GraphQLSchema } from "../src/alembic-graphql/type/schema.ts";
 import { encodeGlobalId } from "../src/index.ts";
-import { buildApp, RequestLayer } from "../examples/todo.ts";
+import { buildApp, RequestLayer, TodoStoreLive } from "../examples/todo.ts";
 
 // ----------------------------------------------------------------------------
-// Shared fixture: build a single schema/app/runtime, drive it via Web Request.
+// Shared fixture: build a single schema/app, drive it via Web Request.
+// Services flow through R via Layer composition — no separate runtime.
 // ----------------------------------------------------------------------------
 
 let schema: GraphQLSchema;
-let runtime: ManagedRuntime.ManagedRuntime<unknown, never>;
 let app: ReturnType<typeof buildApp>["app"];
 
 beforeAll(() => {
   const built = buildApp();
   schema = built.schema;
   app = built.app;
-  runtime = built.runtime as ManagedRuntime.ManagedRuntime<unknown, never>;
-});
-
-afterAll(async () => {
-  await runtime.dispose();
 });
 
 interface GqlResponse {
@@ -69,9 +62,10 @@ const post = async (
     body: JSON.stringify({ query, variables: options?.variables }),
   });
   const req = HttpServerRequest.fromWeb(webReq);
-  const provided = Effect.provide(
-    app,
-    Layer.succeed(HttpServerRequest.HttpServerRequest)(req),
+  const provided = app.pipe(
+    Effect.provide(TodoStoreLive),
+    Effect.provide(RequestLayer),
+    Effect.provide(Layer.succeed(HttpServerRequest.HttpServerRequest)(req)),
   );
   const response = await Effect.runPromise(provided);
   const web = HttpServerResponse.toWeb(response);
@@ -263,7 +257,7 @@ describe("mutation: deleteTodo", () => {
   test("returns the same global id that was passed", async () => {
     const id = encodeGlobalId("Todo", "1");
     const res = await post(
-      `mutation Q($id: String!) { deleteTodo(id: $id) }`,
+      `mutation Q($id: ID!) { deleteTodo(id: $id) }`,
       { variables: { id }, userId: "ada" },
     );
     expect(res.body.errors).toBeUndefined();

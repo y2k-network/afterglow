@@ -8,7 +8,7 @@
 import { graphql } from "react-relay";
 
 export const DeleteTodoMutation = graphql`
-  mutation DeleteTodoMutation($id: String!) {
+  mutation DeleteTodoMutation($id: ID!) {
     deleteTodo(id: $id) @deleteRecord
   }
 `;

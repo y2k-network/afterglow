@@ -591,7 +591,7 @@ used by v1's IR — the difference is the user surface is Layer composition, not
 builder threading.
 
 Why `ROut = never`? Because `Layer.mergeAll` constrains all input layers to
-`Layer<never, any, any>` (line 1111 of Layer.d.ts). If node layers provided a
+`Layer<never, any, any>` (line 1111 of layer.d.ts). If node layers provided a
 service, they'd be incompatible with `mergeAll`. The `RIn` type parameter is
 what carries the resolver service requirements; `mergeAll` unions all `RIn`s
 into the final `Layer<never, never, TodoStore | CurrentUser>`.
@@ -1053,24 +1053,24 @@ All APIs used in §4.6 and the inference harness verified against
 
 | API | Source file | Line | Notes |
 |-----|-------------|------|-------|
-| `Effect.gen(function*() {...})` | `effect/dist/Effect.d.ts` | 1772 | Overloaded; R inferred from `Yieldable<..., R>` union of yielded values |
-| `Effect.succeed(value)` | `effect/dist/Effect.d.ts` | 1397 | Unchanged from v3 |
-| `Layer.effect(Tag)(effect)` | `effect/dist/Layer.d.ts` | 941 | Curried two-argument form confirmed. Previously `Layer.scoped` in v3. |
-| `Layer.mergeAll(...layers)` | `effect/dist/Layer.d.ts` | 1111 | Constraint: each layer must be `Layer<never, any, any>`; returns `Layer<never, E_union, R_union>` |
-| `Layer.Layer<ROut, E, RIn>` | `effect/dist/Layer.d.ts` | 45 | ROut=provides, RIn=requires |
-| `Layer.Services<L>` | `effect/dist/Layer.d.ts` | 100 | Extracts RIn |
-| `Layer.Success<L>` | `effect/dist/Layer.d.ts` | 114 | Extracts ROut |
-| `Context.Service<I, S>()(key)` | `effect/dist/Context.d.ts` | 167 | Class-based form: `class Foo extends Context.Service<Foo, Shape>()("Foo") {}` |
-| `Context.Service` yields in gen | `effect/dist/Context.d.ts` | 61 | `Service<I, S>` implements `Yieldable<..., S, never, I>` — `yield* Tag` gives `S`, requires `I` |
-| `Schema.Class<T>(name)(fields)` | `effect/dist/Schema.d.ts` | 6677 | Two-call form confirmed |
-| `Schema.String` | `effect/dist/Schema.d.ts` | 1619 | Primitive scalar schema |
-| `Schema.Boolean` | `effect/dist/Schema.d.ts` | 1654 | Primitive scalar schema |
-| `Schema.Number` | `effect/dist/Schema.d.ts` | 1639 | Primitive scalar schema |
-| `Schema.DateFromString` | `effect/dist/Schema.d.ts` | 5442 | EXISTS in v4. Decodes `string` → `Date`. Correct for a custom Date scalar. |
-| `ManagedRuntime.make(layer)` | `effect/dist/ManagedRuntime.d.ts` | 129 | Signature: `make<R, ER>(layer: Layer<R, ER, never>)` |
-| `Ref.make(value)` | `effect/dist/Ref.d.ts` | 150 | Returns `Effect<Ref<A>>` |
-| `Stream.Stream<A, E, R>` | `effect/dist/Stream.d.ts` | (type) | Generic stream type |
-| `Stream.toReadableStreamEffect` | `effect/dist/Stream.d.ts` | 13805 | EXISTS in v4. Used in T18 subscription transport. |
+| `Effect.gen(function*() {...})` | `effect/dist/effect.d.ts` | 1772 | Overloaded; R inferred from `Yieldable<..., R>` union of yielded values |
+| `Effect.succeed(value)` | `effect/dist/effect.d.ts` | 1397 | Unchanged from v3 |
+| `Layer.effect(Tag)(effect)` | `effect/dist/layer.d.ts` | 941 | Curried two-argument form confirmed. Previously `Layer.scoped` in v3. |
+| `Layer.mergeAll(...layers)` | `effect/dist/layer.d.ts` | 1111 | Constraint: each layer must be `Layer<never, any, any>`; returns `Layer<never, E_union, R_union>` |
+| `Layer.Layer<ROut, E, RIn>` | `effect/dist/layer.d.ts` | 45 | ROut=provides, RIn=requires |
+| `Layer.Services<L>` | `effect/dist/layer.d.ts` | 100 | Extracts RIn |
+| `Layer.Success<L>` | `effect/dist/layer.d.ts` | 114 | Extracts ROut |
+| `Context.Service<I, S>()(key)` | `effect/dist/context.d.ts` | 167 | Class-based form: `class Foo extends Context.Service<Foo, Shape>()("Foo") {}` |
+| `Context.Service` yields in gen | `effect/dist/context.d.ts` | 61 | `Service<I, S>` implements `Yieldable<..., S, never, I>` — `yield* Tag` gives `S`, requires `I` |
+| `Schema.Class<T>(name)(fields)` | `effect/dist/schema.d.ts` | 6677 | Two-call form confirmed |
+| `Schema.String` | `effect/dist/schema.d.ts` | 1619 | Primitive scalar schema |
+| `Schema.Boolean` | `effect/dist/schema.d.ts` | 1654 | Primitive scalar schema |
+| `Schema.Number` | `effect/dist/schema.d.ts` | 1639 | Primitive scalar schema |
+| `Schema.DateFromString` | `effect/dist/schema.d.ts` | 5442 | EXISTS in v4. Decodes `string` → `Date`. Correct for a custom Date scalar. |
+| `ManagedRuntime.make(layer)` | `effect/dist/managed-runtime.d.ts` | 129 | Signature: `make<R, ER>(layer: Layer<R, ER, never>)` |
+| `Ref.make(value)` | `effect/dist/ref.d.ts` | 150 | Returns `Effect<Ref<A>>` |
+| `Stream.Stream<A, E, R>` | `effect/dist/stream.d.ts` | (type) | Generic stream type |
+| `Stream.toReadableStreamEffect` | `effect/dist/stream.d.ts` | 13805 | EXISTS in v4. Used in T18 subscription transport. |
 
 ### Substitutions and corrections relative to the initial v1 design doc
 

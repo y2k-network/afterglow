@@ -25,9 +25,10 @@
  *   - `opsPerSec` / `msPerOp`: operation throughput.
  */
 import { Context, Effect, Layer, Request, RequestResolver, Schema } from "effect";
-import { execute, parse } from "graphql";
+import { executePromise as execute } from "../src/test-utils/execute-promise.ts";
+import { parseSync as parse } from "../src/alembic-graphql/language/parser.ts";
 import { GraphQL, executeBfs } from "../src/index.ts";
-import { buildSchema } from "../src/http.ts";
+import { buildSchema } from "../src/transport/http.ts";
 import { benchAsync, formatResult, loadResults, saveResults, type BenchResult } from "./harness.ts";
 
 const USER_COUNT = 100;
@@ -72,7 +73,7 @@ let batchCallCount = 0;
 let totalRequestsBatched = 0;
 
 // `RequestResolver.fromFunctionBatched` semantics — see
-// `node_modules/effect/dist/RequestResolver.d.ts:248-285`: takes a list of
+// `node_modules/effect/dist/request-resolver.d.ts:248-285`: takes a list of
 // entries, returns a list of results matched 1:1.
 const batchSizes: number[] = [];
 const PostsResolver = RequestResolver.fromFunctionBatched<GetUserPosts>((entries) => {
@@ -135,7 +136,7 @@ const QueryLayer = GraphQL.Query.layer({
   }),
 });
 
-const schema = buildSchema(Layer.mergeAll(UserNode, PostNode, QueryLayer), null);
+const schema = buildSchema(Layer.mergeAll(UserNode, PostNode, QueryLayer));
 const doc = parse(`{
   users(first: ${USER_COUNT}) {
     edges {
@@ -167,7 +168,7 @@ const runBfs = async () => {
   batchCallCount = 0;
   totalRequestsBatched = 0;
   batchSizes.length = 0;
-  const r = await executeBfs({ schema, document: doc, contextValue: EMPTY_CTX });
+  const r = await Effect.runPromise(executeBfs({ schema, document: doc, contextValue: EMPTY_CTX }));
   if (r.errors) throw new Error(JSON.stringify(r));
   return { batchCalls: batchCallCount, totalRequests: totalRequestsBatched, sizes: [...batchSizes] };
 };

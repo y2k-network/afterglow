@@ -10,30 +10,12 @@
     "rewriteRelativeImportExtensions": true,
     "verbatimModuleSyntax": false
   },
-  "include": [
-    "src/index.ts",
-    "src/builder.ts",
-    "src/http.ts",
-    "src/ws.ts",
-    "src/types.ts",
-    "src/standard-scalars.ts",
-    "src/relay-directives.ts",
-    "src/relay-3d.ts",
-    "src/lower.ts",
-    "src/executor-bfs.ts",
-    "src/lint.ts",
-    "src/relay.ts",
-    "src/graphql-namespace.ts",
-    "src/ir.ts",
-    "src/registry.ts",
-    "src/runtime.ts",
-    "src/schema-bridge.ts",
-    "src/mutation-shapes.ts",
-    "src/http-handler.ts",
-    "src/ws-handler.ts"
-  ],
+  "include": ["src/**/*.ts"],
   "exclude": [
     "src/**/*.test.ts",
-    "src/**/*.fuzz.test.ts"
+    "src/**/*.fuzz.test.ts",
+    "src/**/__tests__/**",
+    "src/**/__testUtils__/**",
+    "src/test-utils/**"
   ]
 }

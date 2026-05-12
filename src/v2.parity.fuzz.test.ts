@@ -37,7 +37,7 @@
  *   - executeBfs — src/executor-bfs.ts:105 (signature) and src/executor-bfs.ts:248
  *     (return shape `{ data, errors }`).
  *   - GraphQL spec § "Errors and Non-Nullability": a thrown non-null field at
- *     the operation root produces `{ data: null, errors: [...] }` (graphql-js
+ *     the operation root produces `{ data: null, errors: [...] }` (GraphQL
  *     enforces this in execute.ts; mirrored in src/executor-bfs.ts:381-392).
  *   - fast-check 4.7.0 `fc.assert` / `fc.asyncProperty`
  *     (node_modules/fast-check/lib/fast-check.d.ts:1141, 1267).
@@ -45,13 +45,11 @@
 import { test, expect } from "bun:test";
 import * as fc from "fast-check";
 import { Context, Data, Effect, Layer, Schema } from "effect";
-import {
-  execute,
-  parse,
-  type DocumentNode,
-  type ExecutionResult,
-  type GraphQLSchema,
-} from "graphql";
+import { executePromise as execute } from "./test-utils/execute-promise.ts";
+import type { ExecutionResult } from "./alembic-graphql/execution/execute.ts";
+import { parseSync as parse } from "./alembic-graphql/language/parser.ts";
+import type { DocumentNode } from "./alembic-graphql/language/ast.ts";
+import type { GraphQLSchema } from "./alembic-graphql/type/schema.ts";
 import {
   Connection,
   Node,
@@ -61,8 +59,8 @@ import {
   queryField,
   toConnection,
 } from "./builder.ts";
-import { buildSchema } from "./http.ts";
-import { executeBfs } from "./executor-bfs.ts";
+import { buildSchema } from "./transport/http.ts";
+import { executeBfs } from "./runtime/executor.ts";
 
 const FULL_RUNS = 1000;
 
@@ -185,7 +183,7 @@ function makeSchema(config: SchemaConfig): GraphQLSchema {
     }),
   });
 
-  return buildSchema(Layer.mergeAll(innerNode, outerNode, QueryLayer), null);
+  return buildSchema(Layer.mergeAll(innerNode, outerNode, QueryLayer));
 }
 
 // ---------------------------------------------------------------------------
@@ -378,12 +376,14 @@ async function runParity({ schema, doc, vars }: ParityArgs): Promise<{
     contextValue: ctx,
     variableValues: vars as Record<string, unknown>,
   })) as ExecutionResult;
-  const bfsResult = await executeBfs({
-    schema,
-    document: doc,
-    contextValue: ctx,
-    variableValues: vars as Record<string, unknown>,
-  });
+  const bfsResult = await Effect.runPromise(
+    executeBfs({
+      schema,
+      document: doc,
+      contextValue: ctx,
+      variableValues: vars as Record<string, unknown>,
+    }),
+  );
   return { defaultResult, bfsResult };
 }
 

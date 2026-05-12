@@ -553,7 +553,7 @@ function wrapResolver<TParent, TArgs, TResult, R, ReqR>(
 }
 ```
 
-`Layer.succeedContext` (verified: `Layer.d.ts:764`) promotes a
+`Layer.succeedContext` (verified: `layer.d.ts:764`) promotes a
 `Context<ReqR>` to a `Layer<ReqR>`, which `Effect.provide` can consume.
 
 ### 4.3 Error handling
@@ -798,11 +798,11 @@ import {
 ```
 
 These are verified in:
-- `node_modules/effect/dist/unstable/http/HttpRouter.d.ts`
-- `node_modules/effect/dist/unstable/http/HttpServerRequest.d.ts`
-- `node_modules/effect/dist/unstable/http/HttpServerResponse.d.ts`
+- `node_modules/effect/dist/unstable/http/http-router.d.ts`
+- `node_modules/effect/dist/unstable/http/http-server-request.d.ts`
+- `node_modules/effect/dist/unstable/http/http-server-response.d.ts`
 
-`HttpRouter.add` (verified at `HttpRouter.d.ts:133`) adds a single route and
+`HttpRouter.add` (verified at `http-router.d.ts:133`) adds a single route and
 returns a `Layer<never, never, HttpRouter | ...>`. Routes are composed into the
 router by providing layers.
 
@@ -812,8 +812,10 @@ router by providing layers.
 // src/http.ts
 
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { execute, parse, validate } from "graphql"
-import type { GraphQLSchema } from "graphql"
+import { execute } from "../src/alembic-graphql/execution/execute.ts"
+import { parse } from "../src/alembic-graphql/language/parser.ts"
+import type { GraphQLSchema } from "../src/alembic-graphql/type/schema.ts"
+import { validate } from "../src/alembic-graphql/validation/validate.ts"
 import { Context, Effect, Layer } from "effect"
 
 export interface ToHttpAppOptions<ReqR = never> {
@@ -840,7 +842,7 @@ export declare function toHttpApp<ReqR = never>(
 
 The handler shape (`Effect<HttpServerResponse, never, HttpServerRequest>`)
 matches the third overload of `HttpRouter.add`'s `handler` arg
-(`HttpRouter.d.ts:24,133`), where the router supplies `HttpServerRequest`
+(`http-router.d.ts:24,133`), where the router supplies `HttpServerRequest`
 out of `Provided`. `R = never` after the user's Layer is provided in the
 handler, so `HttpRouter.add` reports no extra `Requires` to the router.
 
