@@ -6,7 +6,7 @@
  * are built around GraphQL.js execution.
  */
 import { ApolloServer, HeaderMap } from "@apollo/server";
-import { Context, Effect, Layer, Request, RequestResolver, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import {
   HttpServerRequest,
   HttpServerResponse,
@@ -28,6 +28,7 @@ const USER_COUNT = 100;
 const POSTS_PER_USER = 5;
 const SMALL_USER_COUNT = 3;
 const SMALL_POSTS_PER_USER = 2;
+const COMPETITOR_BENCH_OPTIONS = { minSamples: 64, minCpuTimeMs: 500 };
 
 class BenchPost extends Schema.Class<BenchPost>("BenchPost")({
   id: Schema.String,
@@ -55,38 +56,6 @@ for (let user = 0; user < USER_COUNT; user++) {
   );
 }
 
-interface GetBenchPosts extends Request.Request<ReadonlyArray<BenchPost>> {
-  readonly _tag: "GetBenchPosts";
-  readonly userId: string;
-}
-const GetBenchPosts = Request.tagged<GetBenchPosts>("GetBenchPosts");
-
-const PostsResolver = RequestResolver.fromFunctionBatched<GetBenchPosts>((entries) =>
-  entries.map((entry) => postsByUser.get(entry.request.userId) ?? []),
-);
-
-const UserNode = GraphQL.Node.layer(BenchUser)({
-  fields: (field) => ({
-    name: Schema.String,
-    posts: field(GraphQL.Connection(BenchPost), {
-      nonNull: true,
-      resolve: (parent, args) =>
-        Effect.gen(function* () {
-          const rows = yield* Effect.request(
-            GetBenchPosts({ userId: parent.id }),
-            PostsResolver,
-          );
-          const limit = args.first ?? rows.length;
-          return GraphQL.toConnection(rows.slice(0, limit), {
-            cursor: (post) => post.id,
-            hasNextPage: limit < rows.length,
-          });
-        }),
-    }),
-  }),
-  load: (id) => Effect.succeed(new BenchUser({ id, name: `User ${id}` })),
-});
-
 const PostNode = GraphQL.Node.layer(BenchPost)({
   fields: () => ({
     title: Schema.String,
@@ -94,26 +63,51 @@ const PostNode = GraphQL.Node.layer(BenchPost)({
   load: () => Effect.succeed(null),
 });
 
-const QueryLayer = GraphQL.Query.layer({
-  users: GraphQL.queryField(GraphQL.Connection(BenchUser), {
-    resolve: (_root, args) => {
-      const limit = args.first ?? USER_COUNT;
-      const rows = Array.from(
-        { length: Math.min(limit, USER_COUNT) },
-        (_, index) => new BenchUser({ id: `u${index}`, name: `User ${index}` }),
-      );
-      return Effect.succeed(
-        GraphQL.toConnection(rows, {
-          cursor: (user) => user.id,
-          hasNextPage: limit < USER_COUNT,
-        }),
-      );
-    },
-  }),
-});
+const makeAlembicApp = (asyncPosts: boolean) => {
+  const UserNode = GraphQL.Node.layer(BenchUser)({
+    fields: (field) => ({
+      name: Schema.String,
+      posts: field(GraphQL.Connection(BenchPost), {
+        nonNull: true,
+        resolve: (parent, args) => {
+          const rows = postsByUser.get(parent.id) ?? [];
+          const limit = args.first ?? rows.length;
+          const connection = GraphQL.toConnection(rows.slice(0, limit), {
+            cursor: (post) => post.id,
+            hasNextPage: limit < rows.length,
+          });
+          return asyncPosts
+            ? Effect.promise(() => Promise.resolve(connection))
+            : Effect.succeed(connection);
+        },
+      }),
+    }),
+    load: (id) => Effect.succeed(new BenchUser({ id, name: `User ${id}` })),
+  });
 
-const SchemaLayer = Layer.mergeAll(UserNode, PostNode, QueryLayer);
-const alembicApp = GraphQL.toHttpApp(SchemaLayer, { graphiql: false });
+  const QueryLayer = GraphQL.Query.layer({
+    users: GraphQL.queryField(GraphQL.Connection(BenchUser), {
+      resolve: (_root, args) => {
+        const limit = args.first ?? USER_COUNT;
+        const rows = Array.from(
+          { length: Math.min(limit, USER_COUNT) },
+          (_, index) => new BenchUser({ id: `u${index}`, name: `User ${index}` }),
+        );
+        return Effect.succeed(
+          GraphQL.toConnection(rows, {
+            cursor: (user) => user.id,
+            hasNextPage: limit < USER_COUNT,
+          }),
+        );
+      },
+    }),
+  });
+
+  return GraphQL.toHttpApp(Layer.mergeAll(UserNode, PostNode, QueryLayer), { graphiql: false });
+};
+
+const alembicSyncApp = makeAlembicApp(false);
+const alembicPromiseApp = makeAlembicApp(true);
 
 const firehoseSource = `{
   users(first: ${USER_COUNT}) {
@@ -152,10 +146,12 @@ const makeRequest = (source: string) =>
     body: JSON.stringify({ query: source }),
   });
 
-const runAlembic = (source: string) => async () => {
+const runAlembic = (source: string, asyncPosts: boolean) => async () => {
   const req = HttpServerRequest.fromWeb(makeRequest(source));
   const response = await Effect.runPromise(
-    alembicApp.pipe(Effect.provide(Context.make(HttpServerRequest.HttpServerRequest, req))),
+    (asyncPosts ? alembicPromiseApp : alembicSyncApp).pipe(
+      Effect.provide(Context.make(HttpServerRequest.HttpServerRequest, req)),
+    ),
   );
   const web = HttpServerResponse.toWeb(response);
   if (web.status !== 200) throw new Error(`unexpected Alembic HTTP status ${web.status}`);
@@ -306,23 +302,26 @@ const runApollo = (source: string, asyncPosts: boolean) => async () => {
 };
 
 export const main = async (): Promise<BenchResult[]> => {
-  await runAlembic(smallSource)();
+  await runAlembic(smallSource, false)();
+  await runAlembic(smallSource, true)();
   await runYoga(smallSource, false)();
   await runYoga(smallSource, true)();
   await runApollo(smallSource, false)();
   await runApollo(smallSource, true)();
 
   const results: BenchResult[] = [];
-  results.push(await benchAsync("matched firehose POST / AlembicGraphQL", runAlembic(firehoseSource)));
-  results.push(await benchAsync("matched firehose POST / GraphQL Yoga sync", runYoga(firehoseSource, false)));
-  results.push(await benchAsync("matched firehose POST / GraphQL Yoga promise posts", runYoga(firehoseSource, true)));
-  results.push(await benchAsync("matched firehose POST / Apollo Server sync", runApollo(firehoseSource, false)));
-  results.push(await benchAsync("matched firehose POST / Apollo Server promise posts", runApollo(firehoseSource, true)));
-  results.push(await benchAsync("matched small POST / AlembicGraphQL", runAlembic(smallSource)));
-  results.push(await benchAsync("matched small POST / GraphQL Yoga sync", runYoga(smallSource, false)));
-  results.push(await benchAsync("matched small POST / GraphQL Yoga promise posts", runYoga(smallSource, true)));
-  results.push(await benchAsync("matched small POST / Apollo Server sync", runApollo(smallSource, false)));
-  results.push(await benchAsync("matched small POST / Apollo Server promise posts", runApollo(smallSource, true)));
+  results.push(await benchAsync("matched firehose POST / AlembicGraphQL sync", runAlembic(firehoseSource, false), COMPETITOR_BENCH_OPTIONS));
+  results.push(await benchAsync("matched firehose POST / AlembicGraphQL promise posts", runAlembic(firehoseSource, true), COMPETITOR_BENCH_OPTIONS));
+  results.push(await benchAsync("matched firehose POST / GraphQL Yoga sync", runYoga(firehoseSource, false), COMPETITOR_BENCH_OPTIONS));
+  results.push(await benchAsync("matched firehose POST / GraphQL Yoga promise posts", runYoga(firehoseSource, true), COMPETITOR_BENCH_OPTIONS));
+  results.push(await benchAsync("matched firehose POST / Apollo Server sync", runApollo(firehoseSource, false), COMPETITOR_BENCH_OPTIONS));
+  results.push(await benchAsync("matched firehose POST / Apollo Server promise posts", runApollo(firehoseSource, true), COMPETITOR_BENCH_OPTIONS));
+  results.push(await benchAsync("matched small POST / AlembicGraphQL sync", runAlembic(smallSource, false), COMPETITOR_BENCH_OPTIONS));
+  results.push(await benchAsync("matched small POST / AlembicGraphQL promise posts", runAlembic(smallSource, true), COMPETITOR_BENCH_OPTIONS));
+  results.push(await benchAsync("matched small POST / GraphQL Yoga sync", runYoga(smallSource, false), COMPETITOR_BENCH_OPTIONS));
+  results.push(await benchAsync("matched small POST / GraphQL Yoga promise posts", runYoga(smallSource, true), COMPETITOR_BENCH_OPTIONS));
+  results.push(await benchAsync("matched small POST / Apollo Server sync", runApollo(smallSource, false), COMPETITOR_BENCH_OPTIONS));
+  results.push(await benchAsync("matched small POST / Apollo Server promise posts", runApollo(smallSource, true), COMPETITOR_BENCH_OPTIONS));
   return results;
 };
 
