@@ -52,6 +52,15 @@ export interface IRFieldDef {
   readonly semanticNonNull?: boolean;
   readonly description?: string;
   readonly args: Record<string, IRArgDef>;
+  readonly projection?: { readonly _tag: "Property"; readonly key: string };
+  readonly relayGlobalId?: { readonly typename: string; readonly key: string };
+  readonly invocation?: {
+    readonly _tag: "Resolver";
+    readonly needsArgs: boolean;
+    readonly needsInfo: boolean;
+    readonly sync: boolean;
+    readonly resolve: (parent: unknown, args: unknown, info?: GraphQLResolveInfo) => unknown;
+  };
   readonly resolve: (
     parent: unknown,
     args: unknown,

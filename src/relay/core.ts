@@ -37,7 +37,7 @@ export class InvalidGlobalIdError extends Data.TaggedError(
 }> {}
 
 export function encodeGlobalId(typename: string, rawId: string): string {
-  return Buffer.from(`${typename}:${rawId}`).toString("base64");
+  return btoa(`${typename}:${rawId}`);
 }
 
 export function decodeGlobalId(globalId: string): {
@@ -46,7 +46,7 @@ export function decodeGlobalId(globalId: string): {
 } {
   let decoded: string;
   try {
-    decoded = Buffer.from(globalId, "base64").toString("utf8");
+    decoded = atob(globalId);
   } catch {
     throw new InvalidGlobalIdError({
       globalId,
@@ -93,10 +93,10 @@ export function buildPageInfoType(): GraphQLObjectType {
     name: "PageInfo",
     description: "Relay PageInfo — pagination metadata for a Connection.",
     fields: () => ({
-      hasNextPage: { type: new GraphQLNonNull(GraphQLBoolean) },
-      hasPreviousPage: { type: new GraphQLNonNull(GraphQLBoolean) },
-      startCursor: { type: GraphQLString },
-      endCursor: { type: GraphQLString },
+      hasNextPage: projectedField(new GraphQLNonNull(GraphQLBoolean), "hasNextPage"),
+      hasPreviousPage: projectedField(new GraphQLNonNull(GraphQLBoolean), "hasPreviousPage"),
+      startCursor: projectedField(GraphQLString, "startCursor"),
+      endCursor: projectedField(GraphQLString, "endCursor"),
     }),
   });
 }
@@ -119,24 +119,32 @@ export function buildConnectionTypes(
   const edge = new GraphQLObjectType({
     name: `${nodeName}Edge`,
     fields: () => ({
-      node: { type: nodeType },
-      cursor: { type: new GraphQLNonNull(GraphQLString) },
+      node: projectedField(nodeType, "node"),
+      cursor: projectedField(new GraphQLNonNull(GraphQLString), "cursor"),
     }),
   });
 
   const connection = new GraphQLObjectType({
     name: `${nodeName}Connection`,
     fields: () => ({
-      edges: {
-        type: new GraphQLNonNull(new GraphQLList(edge)),
-      },
-      pageInfo: {
-        type: new GraphQLNonNull(pageInfoType),
-      },
+      edges: projectedField(new GraphQLNonNull(new GraphQLList(edge)), "edges"),
+      pageInfo: projectedField(new GraphQLNonNull(pageInfoType), "pageInfo"),
     }),
   });
 
   return { connection, edge };
+}
+
+function projectedField<TSource, TContext>(
+  type: GraphQLFieldConfig<TSource, TContext>["type"],
+  key: string,
+): GraphQLFieldConfig<TSource, TContext> {
+  return {
+    type,
+    extensions: {
+      alembicProjection: { _tag: "Property", key },
+    },
+  };
 }
 
 export function connectionArgs(): GraphQLFieldConfigArgumentMap {

@@ -1,3 +1,5 @@
+import { Result } from "effect";
+
 import { devAssert } from "../jsutils/dev-assert.ts";
 import { inspect } from "../jsutils/inspect.ts";
 import { invariant } from "../jsutils/invariant.ts";
@@ -743,8 +745,11 @@ function getDeprecationReason(
     | DirectiveExtensionNode,
 ): Maybe<string> {
   const deprecated = getDirectiveValues(GraphQLDeprecatedDirective, node);
-  // @ts-expect-error validated by `getDirectiveValues`
-  return deprecated?.reason;
+  return deprecated !== undefined &&
+    Result.isSuccess(deprecated) &&
+    typeof deprecated.success.reason === "string"
+    ? deprecated.success.reason
+    : undefined;
 }
 
 /**
@@ -754,13 +759,17 @@ function getSpecifiedByURL(
   node: ScalarTypeDefinitionNode | ScalarTypeExtensionNode,
 ): Maybe<string> {
   const specifiedBy = getDirectiveValues(GraphQLSpecifiedByDirective, node);
-  // @ts-expect-error validated by `getDirectiveValues`
-  return specifiedBy?.url;
+  return specifiedBy !== undefined &&
+    Result.isSuccess(specifiedBy) &&
+    typeof specifiedBy.success.url === "string"
+    ? specifiedBy.success.url
+    : undefined;
 }
 
 /**
  * Given an input object node, returns if the node should be OneOf.
  */
 function isOneOf(node: InputObjectTypeDefinitionNode): boolean {
-  return Boolean(getDirectiveValues(GraphQLOneOfDirective, node));
+  const oneOf = getDirectiveValues(GraphQLOneOfDirective, node);
+  return oneOf !== undefined && Result.isSuccess(oneOf);
 }

@@ -380,6 +380,9 @@ const compileFieldEntry = (
       description: rawF.description,
       args: argsToIR(rawF.args),
       resolve: makeResolveFromUserFn(fieldName, parentName, rawF.resolve),
+      ...(rawF.resolve === undefined
+        ? { projection: { _tag: "Property" as const, key: fieldName } }
+        : { invocation: makeInvocation(rawF.resolve, Object.keys(rawF.args ?? {}).length > 0) }),
     };
   }
   // Case 2: ScalarType<T> shorthand: `field: DateScalar` is valid (skips the field() wrap)
@@ -394,6 +397,7 @@ const compileFieldEntry = (
       type: outputTypeToIR(raw as ScalarType<unknown>),
       nonNull: false,
       args: {},
+      projection: { _tag: "Property", key: fieldName },
       resolve: defaultPassthroughResolve(fieldName),
     };
   }
@@ -407,12 +411,20 @@ const compileFieldEntry = (
         nonNull: false,
         args: {},
         resolve: makeResolveFromUserFn(fieldName, parentName, (p, _a, _i) => fn(p)),
+        invocation: {
+          _tag: "Resolver",
+          needsArgs: false,
+          needsInfo: false,
+          sync: false,
+          resolve: (parent) => fn(parent),
+        },
       };
     }
     return {
       type: outputTypeToIR(raw as Schema.Top),
       nonNull: false,
       args: {},
+      projection: { _tag: "Property", key: fieldName },
       resolve: defaultPassthroughResolve(fieldName),
     };
   }
@@ -422,6 +434,7 @@ const compileFieldEntry = (
       type: { kind: "scalar", name: "ID" },
       nonNull: false,
       args: {},
+      projection: { _tag: "Property", key: fieldName },
       resolve: defaultPassthroughResolve(fieldName),
     };
   }
@@ -431,6 +444,7 @@ const compileFieldEntry = (
       type: outputTypeToIR(raw as SchemaClass<unknown>),
       nonNull: false,
       args: {},
+      projection: { _tag: "Property", key: fieldName },
       resolve: defaultPassthroughResolve(fieldName),
     };
   }
@@ -458,14 +472,31 @@ const makeResolveFromUserFn = (
 ): IRFieldDef["resolve"] => {
   if (fn === undefined) return defaultPassthroughResolve(fieldName);
   return (parent, args, _ctx, info) => {
-    let v: unknown;
-    try {
-      v = fn(parent, args, info);
-    } catch (err) {
-      return Effect.die(err);
-    }
+    const v = fn(parent, args, info);
     if (isEffect(v)) return v as Effect.Effect<unknown, unknown, unknown>;
     return Effect.succeed(v);
+  };
+};
+
+const makeInvocation = (
+  fn: (parent: any, args: any, info: any) => unknown,
+  hasArgs: boolean,
+): IRFieldDef["invocation"] => {
+  const needsArgs = hasArgs || fn.length >= 2;
+  const needsInfo = fn.length >= 3;
+  const call = fn as (...args: Array<unknown>) => unknown;
+  return {
+    _tag: "Resolver",
+    needsArgs,
+    needsInfo,
+    sync: false,
+    resolve: fn.length === 0
+      ? () => call()
+      : !needsArgs && !needsInfo
+        ? (parent) => call(parent)
+        : !needsInfo
+          ? (parent, args) => call(parent, args)
+          : (parent, args, info) => fn(parent, args, info),
   };
 };
 
@@ -632,16 +663,26 @@ export const Node = {
           // encode it as a global ID at resolve time. If the user DID supply an
           // `id` field we leave theirs untouched.
           if (!("id" in fields)) {
+            const globalIdPrefix = `${name}:`;
+            const resolveId = (parent: unknown): string => {
+              const rawId =
+                typeof parent === "object" && parent !== null
+                  ? String((parent as Record<string, unknown>)["id"] ?? "")
+                  : "";
+              return btoa(`${globalIdPrefix}${rawId}`);
+            };
             fields["id"] = {
               type: { kind: "scalar", name: "ID" },
               nonNull: true,
               args: {},
-              resolve: (parent, _args, _ctx, _info) => {
-                const rawId =
-                  typeof parent === "object" && parent !== null
-                    ? String((parent as Record<string, unknown>)["id"] ?? "")
-                    : "";
-                return Effect.succeed(encodeGlobalId(name, rawId));
+              relayGlobalId: { typename: name, key: "id" },
+              resolve: (parent, _args, _ctx, _info) => Effect.succeed(resolveId(parent)),
+              invocation: {
+                _tag: "Resolver",
+                needsArgs: false,
+                needsInfo: false,
+                sync: true,
+                resolve: resolveId,
               },
             };
           }
@@ -947,6 +988,7 @@ const compileRootField = (
     description: raw.description,
     args: argsToIR(raw.args),
     resolve: makeRootResolve(fieldName, raw.resolve),
+    invocation: makeInvocation(raw.resolve, Object.keys(raw.args ?? {}).length > 0),
   };
 };
 
@@ -955,12 +997,7 @@ const makeRootResolve = (
   fn: (parent: any, args: any, info: any) => unknown,
 ): IRFieldDef["resolve"] => {
   return (parent, args, _ctx, info) => {
-    let v: unknown;
-    try {
-      v = fn(parent, args, info);
-    } catch (err) {
-      return Effect.die(err);
-    }
+    const v = fn(parent, args, info);
     if (isEffect(v)) return v as Effect.Effect<unknown, unknown, unknown>;
     return Effect.succeed(v);
   };

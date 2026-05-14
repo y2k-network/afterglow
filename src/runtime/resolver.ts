@@ -33,9 +33,11 @@ import {
 export type CompiledResolver = (
   parent: unknown,
   args: Record<string, unknown>,
-  ctx: Context.Context<unknown>,
+  ctx: Context.Context<unknown> | undefined,
   info: GraphQLResolveInfo,
-) => Effect.Effect<unknown, unknown, never>;
+) => Effect.Effect<unknown, unknown, unknown>;
+
+const EMPTY_CONTEXT: Context.Context<unknown> = Context.makeUnsafe<unknown>(new Map());
 
 export function compileResolver(
   field: IRFieldDef,
@@ -43,18 +45,32 @@ export function compileResolver(
 ): CompiledResolver {
   const decode = compileArgsDecoder(field.args, fieldPath);
   const userResolve = field.resolve;
+  const hasArgs = Object.keys(field.args ?? {}).length > 0;
+
+  if (!hasArgs) {
+    return (parent, args, ctx, info) => {
+      const safeCtx = Context.isContext(ctx) ? ctx : EMPTY_CONTEXT;
+      const effect = Effect.mapError(
+        userResolve(parent, args, safeCtx, info),
+        (cause) => new ResolverFailure({ fieldPath, cause }),
+      );
+      return safeCtx.mapUnsafe.size === 0
+        ? effect
+        : Effect.provide(effect, safeCtx);
+    };
+  }
 
   return (parent, args, ctx, info) => {
-    const safeCtx = ctx ?? Context.empty();
+    const safeCtx = Context.isContext(ctx) ? ctx : EMPTY_CONTEXT;
     const eff = Effect.flatMap(decode(args), (decoded) =>
       Effect.mapError(
         userResolve(parent, decoded, safeCtx, info),
         (cause) => new ResolverFailure({ fieldPath, cause }),
       ),
-    ).pipe(
-      Effect.withSpan(`graphql.resolve.${fieldPath}`),
     );
-    return Effect.provide(eff, safeCtx) as Effect.Effect<unknown, unknown, never>;
+    return safeCtx.mapUnsafe.size === 0
+      ? eff
+      : Effect.provide(eff, safeCtx);
   };
 }
 

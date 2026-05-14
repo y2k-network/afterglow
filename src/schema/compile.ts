@@ -357,6 +357,19 @@ function buildFieldConfig(
     >["resolve"],
   };
   if (def.description !== undefined) cfg.description = def.description;
+  cfg.extensions = {
+    alembicResolver: {
+      _tag: "ResolverPlan",
+      resolve: def.invocation !== undefined
+        ? (parent, args, _ctx, info) => def.invocation!.resolve(parent, args, info)
+        : (parent, args, ctx, info) => def.resolve(parent, args, ctx, info!),
+      hasArgs: Object.keys(def.args ?? {}).length > 0,
+      needsInfo: def.invocation?.needsInfo ?? true,
+      sync: def.invocation?.sync ?? false,
+    },
+    ...(def.projection !== undefined ? { alembicProjection: def.projection } : {}),
+    ...(def.relayGlobalId !== undefined ? { alembicRelayGlobalId: def.relayGlobalId } : {}),
+  };
 
   const semNonNullAst = buildSemanticNonNullAst(def, fieldName);
   if (semNonNullAst !== null) cfg.astNode = semNonNullAst;

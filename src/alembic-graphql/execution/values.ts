@@ -1,3 +1,5 @@
+import { Result } from 'effect';
+
 import { inspect } from '../jsutils/inspect.ts';
 import { keyMap } from '../jsutils/key-map.ts';
 import type { Maybe } from '../jsutils/maybe.ts';
@@ -47,26 +49,26 @@ export function getVariableValues(
   inputs: { readonly [variable: string]: unknown },
   options?: { maxErrors?: number },
 ): CoercedVariableValues {
-  const errors = [];
+  const errors: Array<GraphQLError> = [];
   const maxErrors = options?.maxErrors;
-  try {
-    const coerced = coerceVariableValues(
-      schema,
-      varDefNodes,
-      inputs,
-      (error) => {
-        if (maxErrors != null && errors.length >= maxErrors) {
-          throw new GraphQLVariableCoercionLimitError();
-        }
-        errors.push(error);
-      },
-    );
+  let limitReached = false;
+  const coerced = coerceVariableValues(
+    schema,
+    varDefNodes,
+    inputs,
+    (error) => {
+      if (limitReached) return;
+      if (maxErrors != null && errors.length >= maxErrors) {
+        errors.push(new GraphQLVariableCoercionLimitError());
+        limitReached = true;
+        return;
+      }
+      errors.push(error);
+    },
+  );
 
-    if (errors.length === 0) {
-      return { coerced };
-    }
-  } catch (error) {
-    errors.push(error as GraphQLError);
+  if (errors.length === 0) {
+    return { coerced };
   }
 
   return { errors };
@@ -170,7 +172,7 @@ export function getArgumentValues(
   def: GraphQLField<unknown, unknown> | GraphQLDirective,
   node: FieldNode | DirectiveNode,
   variableValues?: Maybe<ObjMap<unknown>>,
-): { [argument: string]: unknown } {
+): Result.Result<{ [argument: string]: unknown }, GraphQLError> {
   const coercedValues: { [argument: string]: unknown } = Object.create(null);
 
   /* c8 ignore next */
@@ -186,7 +188,7 @@ export function getArgumentValues(
       if (argDef.defaultValue !== undefined) {
         coercedValues[name] = argDef.defaultValue;
       } else if (isNonNullType(argType)) {
-        throw new GraphQLArgumentCoercionError(
+        return Result.fail(new GraphQLArgumentCoercionError(
           `Argument "${name}" of required type "${inspect(argType)}" ` +
             'was not provided.',
           {
@@ -194,7 +196,7 @@ export function getArgumentValues(
             reason: 'missingRequiredArgument',
             argumentName: name,
           },
-        );
+        ));
       }
       continue;
     }
@@ -211,7 +213,7 @@ export function getArgumentValues(
         if (argDef.defaultValue !== undefined) {
           coercedValues[name] = argDef.defaultValue;
         } else if (isNonNullType(argType)) {
-          throw new GraphQLArgumentCoercionError(
+          return Result.fail(new GraphQLArgumentCoercionError(
             `Argument "${name}" of required type "${inspect(argType)}" ` +
               `was provided the variable "$${variableName}" which was not provided a runtime value.`,
             {
@@ -219,7 +221,7 @@ export function getArgumentValues(
               reason: 'missingRequiredArgumentVariable',
               argumentName: name,
             },
-          );
+          ));
         }
         continue;
       }
@@ -227,7 +229,7 @@ export function getArgumentValues(
     }
 
     if (isNull && isNonNullType(argType)) {
-      throw new GraphQLArgumentCoercionError(
+      return Result.fail(new GraphQLArgumentCoercionError(
         `Argument "${name}" of non-null type "${inspect(argType)}" ` +
           'must not be null.',
         {
@@ -235,7 +237,7 @@ export function getArgumentValues(
           reason: 'nullNonNullArgument',
           argumentName: name,
         },
-      );
+      ));
     }
 
     const coercedValue = valueFromAST(valueNode, argType, variableValues);
@@ -243,18 +245,18 @@ export function getArgumentValues(
       // Note: ValuesOfCorrectTypeRule validation should catch this before
       // execution. This is a runtime check to ensure execution does not
       // continue with an invalid argument value.
-      throw new GraphQLArgumentCoercionError(
+      return Result.fail(new GraphQLArgumentCoercionError(
         `Argument "${name}" has invalid value ${print(valueNode)}.`,
         {
           nodes: valueNode,
           reason: 'invalidArgumentValue',
           argumentName: name,
         },
-      );
+      ));
     }
     coercedValues[name] = coercedValue;
   }
-  return { ...coercedValues };
+  return Result.succeed({ ...coercedValues });
 }
 
 /**
@@ -272,7 +274,7 @@ export function getDirectiveValues(
   directiveDef: GraphQLDirective,
   node: { readonly directives?: ReadonlyArray<DirectiveNode> },
   variableValues?: Maybe<ObjMap<unknown>>,
-): undefined | { [argument: string]: unknown } {
+): undefined | Result.Result<{ [argument: string]: unknown }, GraphQLError> {
   const directiveNode = node.directives?.find(
     (directive) => directive.name.value === directiveDef.name,
   );

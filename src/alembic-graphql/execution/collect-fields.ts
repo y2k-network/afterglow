@@ -1,3 +1,5 @@
+import { Result } from 'effect';
+
 import type { ObjMap } from '../jsutils/obj-map.ts';
 
 import type {
@@ -167,7 +169,7 @@ function shouldIncludeNode(
   node: FragmentSpreadNode | FieldNode | InlineFragmentNode,
 ): boolean {
   const skip = getDirectiveValues(GraphQLSkipDirective, node, variableValues);
-  if (skip?.if === true) {
+  if (skip !== undefined && Result.isSuccess(skip) && skip.success.if === true) {
     return false;
   }
 
@@ -176,7 +178,7 @@ function shouldIncludeNode(
     node,
     variableValues,
   );
-  if (include?.if === false) {
+  if (include !== undefined && Result.isSuccess(include) && include.success.if === false) {
     return false;
   }
   return true;

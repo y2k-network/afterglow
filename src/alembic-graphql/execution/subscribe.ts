@@ -1,4 +1,4 @@
-import { Effect, Stream } from 'effect';
+import { Effect, Result, Stream } from 'effect';
 
 import { devAssert } from '../jsutils/dev-assert.ts';
 import { inspect } from '../jsutils/inspect.ts';
@@ -12,23 +12,15 @@ import {
 import { locatedError } from '../error/located-error.ts';
 
 import { collectFields } from './collect-fields.ts';
-import type {
-  EffectFieldResolver,
-  EffectSubscribeResolver,
-  ExecutionArgs,
-  ExecutionContext,
-  ExecutionResult,
-} from './execute.ts';
+import type { ExecutionArgs, ExecutionContext, ExecutionResult } from './execute.ts';
 import {
   assertValidExecutionArguments,
   buildExecutionContextEffect,
   buildResolveInfo,
   execute,
   getFieldDef,
-  resolverResultToEffect,
 } from './execute.ts';
 import { getArgumentValues } from './values.ts';
-import type { GraphQLResolverResult } from '../type/definition.ts';
 
 /**
  * Implements the "Subscribe" algorithm described in the GraphQL specification.
@@ -84,10 +76,10 @@ export function createSourceEventStream<R = never>(
     assertValidExecutionArguments(schema, document, variableValues);
 
     const exeContextOrErrors = yield* buildExecutionContextEffect(args);
-    if (Array.isArray(exeContextOrErrors)) {
-      return { errors: exeContextOrErrors } as ExecutionResult;
+    if (!("operation" in exeContextOrErrors)) {
+      return { errors: exeContextOrErrors };
     }
-    const exeContext = exeContextOrErrors as ExecutionContext;
+    const exeContext: ExecutionContext = exeContextOrErrors;
 
     return yield* executeSubscription<R>(exeContext).pipe(
       Effect.flatMap((eventStream) => {
@@ -99,11 +91,11 @@ export function createSourceEventStream<R = never>(
             ),
           );
         }
-        return Effect.succeed(eventStream as Stream.Stream<unknown, unknown, R>);
+        return Effect.succeed(eventStream);
       }),
       Effect.catch((error: unknown) => {
         if (isGraphQLError(error)) {
-          return Effect.succeed({ errors: [error] } as ExecutionResult);
+          return Effect.succeed({ errors: [error] });
         }
         return Effect.die(error);
       }),
@@ -166,34 +158,22 @@ function executeSubscription<R>(
       path,
     );
 
-    const resolveFn: EffectSubscribeResolver<any, any, any, R> =
-      (fieldDef.subscribe as
-        | EffectSubscribeResolver<any, any, any, R>
-        | undefined) ??
-      (exeContext.subscribeFieldResolver as EffectSubscribeResolver<
-        any,
-        any,
-        any,
-        R
-      >);
+    const resolveFn = fieldDef.subscribe ?? exeContext.subscribeFieldResolver;
 
     const program: Effect.Effect<Stream.Stream<unknown, unknown, R>, unknown, R> = Effect.gen(function* () {
-      const args = yield* Effect.try({
-        try: () =>
-          getArgumentValues(fieldDef, fieldNode, variableValues),
-        catch: (e) => e,
-      });
-      const stream = yield* resolverResultToEffect<
-        Stream.Stream<unknown, unknown, R>,
-        R
-      >(() =>
-        resolveFn(
-          rootValue,
-          args,
-          exeContext.contextValue,
-          info,
-        ) as GraphQLResolverResult<Stream.Stream<unknown, unknown, R>, R>,
+      const args = getArgumentValues(fieldDef, fieldNode, variableValues);
+      if (Result.isFailure(args)) {
+        return yield* Effect.fail(args.failure);
+      }
+      const streamResult = resolveFn(
+        rootValue,
+        args.success,
+        exeContext.contextValue,
+        info,
       );
+      const stream = yield* (Effect.isEffect(streamResult)
+        ? streamResult
+        : Effect.succeed(streamResult));
       if (stream instanceof Error) {
         return yield* Effect.fail(stream);
       }

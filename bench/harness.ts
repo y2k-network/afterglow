@@ -26,6 +26,25 @@ export interface BenchOptions {
   readonly minCpuTimeMs?: number;
 }
 
+let blackholeState = 0;
+
+export const consume = (value: unknown): void => {
+  const type = typeof value;
+  if (value == null) {
+    blackholeState = (blackholeState + 1) | 0;
+  } else if (type === "number") {
+    blackholeState = (blackholeState + (value as number | 0)) | 0;
+  } else if (type === "string") {
+    blackholeState = (blackholeState + (value as string).length) | 0;
+  } else if (type === "boolean") {
+    blackholeState = (blackholeState + (value ? 3 : 7)) | 0;
+  } else {
+    blackholeState = (blackholeState + Object.keys(value as object).length) | 0;
+  }
+};
+
+export const blackhole = (): number => blackholeState;
+
 export interface BenchResult {
   readonly name: string;
   readonly opsPerSec: number;        // 1e9 / p50 ns
@@ -80,10 +99,10 @@ const toResult = (
  */
 export const bench = async (
   name: string,
-  fn: () => void,
+  fn: () => unknown,
   opts: BenchOptions = {},
 ): Promise<BenchResult> => {
-  const stats = await measure(fn, toBenchOpts(opts));
+  const stats = await measure(() => consume(fn()), toBenchOpts(opts));
   return toResult(name, stats);
 };
 
@@ -95,7 +114,7 @@ export const benchAsync = async (
   fn: () => Promise<unknown>,
   opts: BenchOptions = {},
 ): Promise<BenchResult> => {
-  const stats = await measure(fn, toBenchOpts(opts));
+  const stats = await measure(async () => consume(await fn()), toBenchOpts(opts));
   return toResult(name, stats);
 };
 

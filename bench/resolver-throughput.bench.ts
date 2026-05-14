@@ -5,19 +5,24 @@
  *   2. 100 sibling resolvers:  `query { row { f0 ... f99 } }`  (default vs BFS)
  *   3. 10-deep nested:         `query { d0 { d1 { ... d9 { value } } } }`
  *
- * For 2/3 we compare graphql-js's default `execute()` against `executeBfs()`.
- * graphql-js requires `contextValue` to be a `Context.Context` (the
+ * For each scenario we compare the default compiled executor, the same path
+ * with coarse tracing enabled, and the current BFS executor.
+ * The executor requires `contextValue` to be a `Context.Context` (the
  * resolver-runtime calls `Effect.provide(eff, ctx)` and ctx must be a Context,
  * else `provide` interprets it as a Layer and crashes inside `Layer.build`).
  */
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Fiber, Layer, Schema } from "effect";
 import { executePromise as execute } from "../src/test-utils/execute-promise.ts";
 import { parseSync as parse } from "../src/alembic-graphql/language/parser.ts";
 import type { DocumentNode } from "../src/alembic-graphql/language/ast.ts";
 import type { GraphQLSchema } from "../src/alembic-graphql/type/schema.ts";
 import { GraphQL, executeBfs } from "../src/index.ts";
 import { buildSchema } from "../src/transport/http.ts";
-import { benchAsync, formatResult, loadResults, saveResults, type BenchResult } from "./harness.ts";
+import {
+  compileExecutionArtifact,
+  execute as executeEffect,
+} from "../src/alembic-graphql/execution/execute.ts";
+import { bench, benchAsync, formatResult, loadResults, saveResults, type BenchResult } from "./harness.ts";
 
 const EMPTY_CTX = Context.empty();
 
@@ -161,6 +166,83 @@ const runDefault = (schema: GraphQLSchema, doc: DocumentNode) => async () => {
   return r;
 };
 
+const runDefaultTraced = (schema: GraphQLSchema, doc: DocumentNode) => async () => {
+  const r = await execute({
+    schema,
+    document: doc,
+    contextValue: EMPTY_CTX,
+    options: { trace: true },
+  });
+  if ((r as { errors?: ReadonlyArray<unknown> }).errors) {
+    throw new Error(JSON.stringify(r));
+  }
+  return r;
+};
+
+const runDefaultEffectNative = (schema: GraphQLSchema, doc: DocumentNode) => () => {
+  const r = Effect.runSync(executeEffect({ schema, document: doc, contextValue: EMPTY_CTX }));
+  if ((r as { errors?: ReadonlyArray<unknown> }).errors) {
+    throw new Error(JSON.stringify(r));
+  }
+  return r;
+};
+
+const runCompiledArtifact = (schema: GraphQLSchema, doc: DocumentNode) => {
+  const artifact = compileExecutionArtifact({ schema, document: doc, contextValue: EMPTY_CTX });
+  if (artifact === null) return null;
+  for (let i = 0; i < 64; i++) Effect.runSync(artifact.execute());
+  return () => {
+    const r = Effect.runSync(artifact.execute());
+    if ((r as { errors?: ReadonlyArray<unknown> }).errors) {
+      throw new Error(JSON.stringify(r));
+    }
+    return r;
+  };
+};
+
+const runCompiledArtifactAsyncHarness = (schema: GraphQLSchema, doc: DocumentNode) => {
+  const artifact = compileExecutionArtifact({ schema, document: doc, contextValue: EMPTY_CTX });
+  if (artifact === null) return null;
+  for (let i = 0; i < 64; i++) Effect.runSync(artifact.execute());
+  return async () => {
+    const r = await Effect.runPromise(artifact.execute());
+    if ((r as { errors?: ReadonlyArray<unknown> }).errors) {
+      throw new Error(JSON.stringify(r));
+    }
+    return r;
+  };
+};
+
+const runDefaultEffectNativeAsyncHarness = (schema: GraphQLSchema, doc: DocumentNode) => async () => {
+  const r = Effect.runSync(executeEffect({ schema, document: doc, contextValue: EMPTY_CTX }));
+  if ((r as { errors?: ReadonlyArray<unknown> }).errors) {
+    throw new Error(JSON.stringify(r));
+  }
+  return r;
+};
+
+const runDefaultEffectNativeTraced = (schema: GraphQLSchema, doc: DocumentNode) => () => {
+  const r = Effect.runSync(executeEffect({
+    schema,
+    document: doc,
+    contextValue: EMPTY_CTX,
+    options: { trace: true },
+  }));
+  if ((r as { errors?: ReadonlyArray<unknown> }).errors) {
+    throw new Error(JSON.stringify(r));
+  }
+  return r;
+};
+
+const runDefaultForkJoin = (schema: GraphQLSchema, doc: DocumentNode) => async () => {
+  const fiber = Effect.runFork(executeEffect({ schema, document: doc, contextValue: EMPTY_CTX }));
+  const r = await Effect.runPromise(Fiber.join(fiber));
+  if ((r as { errors?: ReadonlyArray<unknown> }).errors) {
+    throw new Error(JSON.stringify(r));
+  }
+  return r;
+};
+
 const runBfs = (schema: GraphQLSchema, doc: DocumentNode) => async () => {
   const r = await Effect.runPromise(executeBfs({ schema, document: doc, contextValue: EMPTY_CTX }));
     if (r.errors) throw new Error(JSON.stringify(r));
@@ -178,7 +260,16 @@ export const main = async (): Promise<BenchResult[]> => {
   {
     const schema = buildSingleResolverSchema();
     const doc = parse("{ user { id name } }");
-    results.push(await benchAsync("single resolver / default executor", runDefault(schema, doc)));
+    const artifact = runCompiledArtifact(schema, doc);
+    const artifactAsync = runCompiledArtifactAsyncHarness(schema, doc);
+    results.push(await benchAsync("single resolver / polymorphic default executor", runDefault(schema, doc)));
+    results.push(await bench("single resolver / polymorphic default executor / effect-native", runDefaultEffectNative(schema, doc)));
+    if (artifact !== null) results.push(await bench("single resolver / polymorphic compiled artifact", artifact));
+    if (artifactAsync !== null) results.push(await benchAsync("single resolver / polymorphic compiled artifact / async harness", artifactAsync));
+    results.push(await benchAsync("single resolver / default executor / effect-native / async harness", runDefaultEffectNativeAsyncHarness(schema, doc)));
+    results.push(await benchAsync("single resolver / default executor / runFork+join", runDefaultForkJoin(schema, doc)));
+    results.push(await benchAsync("single resolver / default executor / traced", runDefaultTraced(schema, doc)));
+    results.push(await bench("single resolver / default executor / effect-native / traced", runDefaultEffectNativeTraced(schema, doc)));
     results.push(await benchAsync("single resolver / bfs executor", runBfs(schema, doc)));
   }
 
@@ -187,7 +278,16 @@ export const main = async (): Promise<BenchResult[]> => {
     const schema = buildSiblingSchema();
     const sel = Array.from({ length: SIBLING_COUNT }, (_, i) => `f${i}`).join(" ");
     const doc = parse(`{ row { ${sel} } }`);
-    results.push(await benchAsync("100 siblings / default executor", runDefault(schema, doc)));
+    const artifact = runCompiledArtifact(schema, doc);
+    const artifactAsync = runCompiledArtifactAsyncHarness(schema, doc);
+    results.push(await benchAsync("100 siblings / polymorphic default executor", runDefault(schema, doc)));
+    results.push(await bench("100 siblings / polymorphic default executor / effect-native", runDefaultEffectNative(schema, doc)));
+    if (artifact !== null) results.push(await bench("100 siblings / polymorphic compiled artifact", artifact));
+    if (artifactAsync !== null) results.push(await benchAsync("100 siblings / polymorphic compiled artifact / async harness", artifactAsync));
+    results.push(await benchAsync("100 siblings / default executor / effect-native / async harness", runDefaultEffectNativeAsyncHarness(schema, doc)));
+    results.push(await benchAsync("100 siblings / default executor / runFork+join", runDefaultForkJoin(schema, doc)));
+    results.push(await benchAsync("100 siblings / default executor / traced", runDefaultTraced(schema, doc)));
+    results.push(await bench("100 siblings / default executor / effect-native / traced", runDefaultEffectNativeTraced(schema, doc)));
     results.push(await benchAsync("100 siblings / bfs executor", runBfs(schema, doc)));
   }
 
@@ -197,7 +297,16 @@ export const main = async (): Promise<BenchResult[]> => {
     let q = "value";
     for (let d = 1; d < 10; d++) q = `child { ${q} }`;
     const doc = parse(`{ root { ${q} } }`);
-    results.push(await benchAsync("10-deep nested / default executor", runDefault(schema, doc)));
+    const artifact = runCompiledArtifact(schema, doc);
+    const artifactAsync = runCompiledArtifactAsyncHarness(schema, doc);
+    results.push(await benchAsync("10-deep nested / polymorphic default executor", runDefault(schema, doc)));
+    results.push(await bench("10-deep nested / polymorphic default executor / effect-native", runDefaultEffectNative(schema, doc)));
+    if (artifact !== null) results.push(await bench("10-deep nested / polymorphic compiled artifact", artifact));
+    if (artifactAsync !== null) results.push(await benchAsync("10-deep nested / polymorphic compiled artifact / async harness", artifactAsync));
+    results.push(await benchAsync("10-deep nested / default executor / effect-native / async harness", runDefaultEffectNativeAsyncHarness(schema, doc)));
+    results.push(await benchAsync("10-deep nested / default executor / runFork+join", runDefaultForkJoin(schema, doc)));
+    results.push(await benchAsync("10-deep nested / default executor / traced", runDefaultTraced(schema, doc)));
+    results.push(await bench("10-deep nested / default executor / effect-native / traced", runDefaultEffectNativeTraced(schema, doc)));
     results.push(await benchAsync("10-deep nested / bfs executor", runBfs(schema, doc)));
   }
 

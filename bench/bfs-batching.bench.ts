@@ -27,6 +27,7 @@
 import { Context, Effect, Layer, Request, RequestResolver, Schema } from "effect";
 import { executePromise as execute } from "../src/test-utils/execute-promise.ts";
 import { parseSync as parse } from "../src/alembic-graphql/language/parser.ts";
+import { compileExecutionArtifact } from "../src/alembic-graphql/execution/execute.ts";
 import { GraphQL, executeBfs } from "../src/index.ts";
 import { buildSchema } from "../src/transport/http.ts";
 import { benchAsync, formatResult, loadResults, saveResults, type BenchResult } from "./harness.ts";
@@ -164,6 +165,11 @@ const runDefault = async () => {
   return { batchCalls: batchCallCount, totalRequests: totalRequestsBatched, sizes: [...batchSizes] };
 };
 
+const artifact = compileExecutionArtifact({ schema, document: doc, contextValue: EMPTY_CTX });
+if (artifact === null) {
+  throw new Error("expected batching benchmark to compile to an execution artifact");
+}
+
 const runBfs = async () => {
   batchCallCount = 0;
   totalRequestsBatched = 0;
@@ -179,20 +185,20 @@ export const main = async () => {
   const bShape = await runBfs();
   console.log(
     `\nBatching shape (${USER_COUNT} users):\n` +
-      `  default: ${dShape.batchCalls} batch call(s), ${dShape.totalRequests} requests total, sizes=[${dShape.sizes.join(",")}]\n` +
-      `  bfs    : ${bShape.batchCalls} batch call(s), ${bShape.totalRequests} requests total, sizes=[${bShape.sizes.join(",")}]\n`,
+      `  artifact BFS scheduler: ${dShape.batchCalls} batch call(s), ${dShape.totalRequests} requests total, sizes=[${dShape.sizes.join(",")}]\n` +
+      `  legacy BFS executor   : ${bShape.batchCalls} batch call(s), ${bShape.totalRequests} requests total, sizes=[${bShape.sizes.join(",")}]\n`,
   );
 
   const results: BenchResult[] = [];
   results.push(
     await benchAsync(
-      `BFS demo / default executor (batches ≈ ${dShape.batchCalls})`,
+      `batching / artifact BFS scheduler (batches ≈ ${dShape.batchCalls})`,
       () => runDefault(),
     ),
   );
   results.push(
     await benchAsync(
-      `BFS demo / bfs executor (batches ≈ ${bShape.batchCalls})`,
+      `batching / legacy BFS executor (batches ≈ ${bShape.batchCalls})`,
       () => runBfs(),
     ),
   );

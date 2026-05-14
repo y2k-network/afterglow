@@ -266,6 +266,17 @@ const executeFieldsLevel = (
   fields: Map<string, ReadonlyArray<G.FieldNode>>,
 ): Effect.Effect<Record<string, unknown>, NonNullBubble | G.GraphQLError, never> =>
   Effect.gen(function* () {
+    if (fields.size === 1) {
+      const entry = fields.entries().next().value;
+      if (entry === undefined) return Object.create(null);
+      const [responseName, fieldNodes] = entry;
+      const fieldPath = addPath(path, responseName, parentType.name);
+      const value = yield* executeField(exe, parentType, source, fieldNodes, fieldPath);
+      const out: Record<string, unknown> = Object.create(null);
+      if (value !== undefined) out[responseName] = value;
+      return out;
+    }
+
     const entries: Array<{ name: string; path: Path }> = [];
     const effects: Array<Effect.Effect<unknown, NonNullBubble | G.GraphQLError, never>> = [];
 

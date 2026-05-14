@@ -101,7 +101,6 @@ export function assertValidSchema(schema: GraphQLSchema): void {
     if (errors.length === 1) throw errors[0];
     throw new GraphQLSchemaValidationError(
       errors.map((error) => error.message).join('\n\n'),
-      { reason: 'multipleSchemaValidationErrors' },
     );
   }
 }

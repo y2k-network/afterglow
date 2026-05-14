@@ -8,6 +8,7 @@
 import { Context, Effect, Layer, Schema } from "effect";
 import { executePromise as execute } from "../src/test-utils/execute-promise.ts";
 import { parseSync as parse } from "../src/alembic-graphql/language/parser.ts";
+import { compileExecutionArtifact } from "../src/alembic-graphql/execution/execute.ts";
 import { GraphQL, executeBfs } from "../src/index.ts";
 import { buildSchema } from "../src/transport/http.ts";
 import { benchAsync, formatResult, loadResults, saveResults, type BenchResult } from "./harness.ts";
@@ -54,12 +55,24 @@ const doc = parse(`{
     pageInfo { hasNextPage endCursor }
   }
 }`);
+const artifact = compileExecutionArtifact({ schema, document: doc, contextValue: EMPTY_CTX });
+if (artifact === null) {
+  throw new Error("expected pagination benchmark to compile to an execution artifact");
+}
+for (let i = 0; i < 64; i++) await Effect.runPromise(artifact.execute());
 
 export const main = async (): Promise<BenchResult[]> => {
   const results: BenchResult[] = [];
   results.push(
     await benchAsync(`connection page first:${PAGE} of ${TOTAL} / default`, async () => {
       const r = await execute({ schema, document: doc, contextValue: EMPTY_CTX });
+      if ((r as { errors?: ReadonlyArray<unknown> }).errors) throw new Error(JSON.stringify(r));
+      return r;
+    }),
+  );
+  results.push(
+    await benchAsync(`connection page first:${PAGE} of ${TOTAL} / compiled artifact`, async () => {
+      const r = await Effect.runPromise(artifact.execute());
       if ((r as { errors?: ReadonlyArray<unknown> }).errors) throw new Error(JSON.stringify(r));
       return r;
     }),

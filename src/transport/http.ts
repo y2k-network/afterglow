@@ -134,6 +134,7 @@ export const toHttpApp = <R>(
   const pqField = pq?.field ?? DEFAULT_PQ_FIELD;
   const pqRequired = pq?.required === true;
   const pqLookup = (hash: string): string | undefined => pq?.store.get(hash);
+  const documentCache = new Map<string, DocumentNode>();
 
   const dispatch: Effect.Effect<
     HttpServerResponse.HttpServerResponse,
@@ -167,8 +168,11 @@ export const toHttpApp = <R>(
       );
     }
 
-    const document = yield* parseDocument(afterPq.query);
-    yield* validateDocument(schema, document);
+    const document = yield* getValidatedDocument(
+      schema,
+      documentCache,
+      afterPq.query,
+    );
 
     if (req.method === "GET" && containsMutation(document, afterPq.operationName)) {
       return yield* Effect.fail(
@@ -403,6 +407,22 @@ const validateDocument = (
     if (errors.length === 0) return Effect.void;
     return Effect.fail(new OperationValidationError({ errors }));
   }).pipe(Effect.withSpan("graphql.validate"));
+
+const getValidatedDocument = (
+  schema: GraphQLSchema,
+  cache: Map<string, DocumentNode>,
+  source: string,
+): Effect.Effect<DocumentNode, OperationParseError | OperationValidationError, never> => {
+  const cached = cache.get(source);
+  if (cached !== undefined) return Effect.succeed(cached);
+
+  return Effect.gen(function* () {
+    const document = yield* parseDocument(source);
+    yield* validateDocument(schema, document);
+    cache.set(source, document);
+    return document;
+  });
+};
 
 // ---------------------------------------------------------------------------
 // Edge mappers

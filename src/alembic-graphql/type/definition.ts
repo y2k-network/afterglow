@@ -41,7 +41,7 @@ import { print } from '../language/printer.ts';
 
 import { valueFromASTUntyped } from '../utilities/value-from-ast-untyped.ts';
 
-import { Effect, Stream } from 'effect';
+import { type Context, Effect, Stream } from 'effect';
 
 import { assertEnumValueName, assertName } from './assert-name.ts';
 import type { GraphQLSchema } from './schema.ts';
@@ -1026,6 +1026,20 @@ export interface GraphQLResolveInfo {
  * you may find them useful.
  */
 export interface GraphQLFieldExtensions<_TSource, _TContext, _TArgs = any> {
+  readonly alembicProjection?: { readonly _tag: 'Property'; readonly key: string };
+  readonly alembicRelayGlobalId?: { readonly typename: string; readonly key: string };
+  readonly alembicResolver?: {
+    readonly _tag: 'ResolverPlan';
+    readonly resolve: (
+      parent: unknown,
+      args: unknown,
+      ctx: Context.Context<unknown>,
+      info?: GraphQLResolveInfo,
+    ) => GraphQLResolverResult<unknown, unknown>;
+    readonly hasArgs: boolean;
+    readonly needsInfo: boolean;
+    readonly sync: boolean;
+  };
   [attributeName: string]: unknown;
 }
 
