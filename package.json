@@ -64,6 +64,7 @@
     "@microsoft/api-extractor": "^7.58.7",
     "@types/bun": "latest",
     "@types/node": "^25.6.2",
+    "dataloader": "^2.2.3",
     "fast-check": "^4.8.0",
     "graphql": "^16.14.0",
     "graphql-yoga": "^5.21.0",
