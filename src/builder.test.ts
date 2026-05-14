@@ -16,6 +16,7 @@ import {
   Stream,
 } from "effect";
 import { executePromise as execute } from "./test-utils/execute-promise.ts";
+import { compileExecutionArtifact } from "./alembic-graphql/execution/execute.ts";
 import { parseSync as parse } from "./alembic-graphql/language/parser.ts";
 import { subscribe } from "./alembic-graphql/execution/subscribe.ts";
 import { printSchema } from "./alembic-graphql/utilities/print-schema.ts";
@@ -330,6 +331,49 @@ test("smoke: Connection auto-registers; no Connection.layer() call needed", asyn
     document: parse(`{ todos(first: 1) { edges { node { title } cursor } pageInfo { hasNextPage } } }`),
     contextValue: contextValue,
   });
+  expect(result.errors).toBeUndefined();
+  expect((result.data as any).todos.edges).toHaveLength(1);
+  expect((result.data as any).todos.edges[0].node.title).toBe("Read");
+  expect((result.data as any).todos.pageInfo.hasNextPage).toBe(true);
+
+  await runtime.dispose();
+});
+
+test("compiled artifact passes connection auto-args to resolvers", async () => {
+  const TodoNode = Node.layer(TodoT)({
+    fields: () => ({
+      title: Schema.String,
+    }),
+    load: (id) =>
+      Effect.gen(function* () {
+        const store = yield* TodoStoreT;
+        return yield* store.findById(id);
+      }),
+  });
+
+  const QueryLayer = Query.layer({
+    todos: queryField(Connection(TodoT), {
+      resolve: (_root, args) =>
+        Effect.gen(function* () {
+          const store = yield* TodoStoreT;
+          const all = yield* store.list();
+          const limit = args.first ?? all.length;
+          return toConnection(all.slice(0, limit), {
+            cursor: (t) => t.id,
+            hasNextPage: limit < all.length,
+          });
+        }),
+    }),
+  });
+
+  const runtime = ManagedRuntime.make(TodoStoreLive);
+  const schema = buildSchema(Layer.mergeAll(TodoNode, QueryLayer));
+  const contextValue = await runtime.context();
+  const document = parse(`{ todos(first: 1) { edges { node { title } } pageInfo { hasNextPage } } }`);
+  const artifact = compileExecutionArtifact({ schema, document, contextValue });
+
+  expect(artifact).not.toBeNull();
+  const result = await Effect.runPromise(artifact!.execute());
   expect(result.errors).toBeUndefined();
   expect((result.data as any).todos.edges).toHaveLength(1);
   expect((result.data as any).todos.edges[0].node.title).toBe("Read");

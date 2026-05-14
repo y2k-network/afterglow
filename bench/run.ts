@@ -15,6 +15,7 @@ const BENCHES = [
   "bench/pagination.bench.ts",
   "bench/bfs-batching.bench.ts",
   "bench/alembic-stack.bench.ts",
+  "bench/http-competitors.bench.ts",
   "bench/subscriptions-memory.bench.ts",
 ];
 

@@ -19,11 +19,13 @@ import {
 } from "../src/alembic-graphql/execution/execute.ts";
 import { GraphQL } from "../src/index.ts";
 import { buildSchema } from "../src/transport/http.ts";
-import { bench, benchAsync, formatResult, loadResults, saveResults, type BenchResult } from "./harness.ts";
+import { benchAsync, formatResult, loadResults, saveResults, type BenchResult } from "./harness.ts";
 
 const EMPTY_CTX = Context.empty() as Context.Context<unknown>;
 const USER_COUNT = 100;
 const POSTS_PER_USER = 5;
+const SMALL_USER_COUNT = 3;
+const SMALL_POSTS_PER_USER = 2;
 
 class StackPost extends Schema.Class<StackPost>("StackPost")({
   id: Schema.String,
@@ -69,6 +71,12 @@ const PostsResolver = RequestResolver.fromFunctionBatched<GetStackPosts>((entrie
 const resetBatchCounters = () => {
   batchCalls = 0;
   requestsBatched = 0;
+};
+
+const expectBatch = (label: string, expected: number) => {
+  if (batchCalls !== 1 || requestsBatched !== expected) {
+    throw new Error(`expected one ${label} batch of ${expected}, got ${batchCalls}/${requestsBatched}`);
+  }
 };
 
 const UserNode = GraphQL.Node.layer(StackUser)({
@@ -120,7 +128,7 @@ const QueryLayer = GraphQL.Query.layer({
 
 const SchemaLayer = Layer.mergeAll(UserNode, PostNode, QueryLayer);
 const schema = buildSchema(SchemaLayer);
-const source = `{
+const firehoseSource = `{
   users(first: ${USER_COUNT}) {
     edges {
       node {
@@ -134,72 +142,115 @@ const source = `{
     pageInfo { hasNextPage }
   }
 }`;
-const document = parse(source);
-const artifact = compileExecutionArtifact({ schema, document, contextValue: EMPTY_CTX });
-if (artifact === null) {
-  throw new Error("expected Alembic stack benchmark to compile to an artifact");
-}
+const smallSource = `{
+  users(first: ${SMALL_USER_COUNT}) {
+    edges {
+      node {
+        id
+        name
+        posts(first: ${SMALL_POSTS_PER_USER}) {
+          edges { node { id title } }
+        }
+      }
+    }
+    pageInfo { hasNextPage }
+  }
+}`;
 
-for (let i = 0; i < 64; i++) await Effect.runPromise(artifact.execute());
+const compileHotArtifact = async (source: string) => {
+  const document = parse(source);
+  const artifact = compileExecutionArtifact({ schema, document, contextValue: EMPTY_CTX });
+  if (artifact === null) {
+    throw new Error("expected Alembic stack benchmark to compile to an artifact");
+  }
+  for (let i = 0; i < 64; i++) await Effect.runPromise(artifact.execute());
+  return { document, artifact };
+};
+
+const firehose = await compileHotArtifact(firehoseSource);
+const small = await compileHotArtifact(smallSource);
 
 const app = GraphQL.toHttpApp(SchemaLayer, { graphiql: false });
-const body = JSON.stringify({ query: source });
-const makeRequest = () =>
+const makeRequest = (source: string) =>
   new globalThis.Request("http://localhost/graphql", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body,
+    body: JSON.stringify({ query: source }),
   });
 
-const runArtifact = async () => {
+const runArtifact = (artifact: typeof firehose.artifact) => async () => {
   resetBatchCounters();
   const result = await Effect.runPromise(artifact.execute());
   if (result.errors) throw new Error(JSON.stringify(result));
   return result;
 };
 
-const runExecute = async () => {
+const runExecute = (document: typeof firehose.document) => async () => {
   resetBatchCounters();
   const result = await Effect.runPromise(executeEffect({ schema, document, contextValue: EMPTY_CTX }));
   if (result.errors) throw new Error(JSON.stringify(result));
   return result;
 };
 
-const runHttp = async () => {
+const runHttp = (source: string) => async () => {
   resetBatchCounters();
-  const req = HttpServerRequest.fromWeb(makeRequest());
+  const req = HttpServerRequest.fromWeb(makeRequest(source));
   const response = await Effect.runPromise(
-    app.pipe(Effect.provide(Layer.succeed(HttpServerRequest.HttpServerRequest)(req))),
+    app.pipe(Effect.provide(Context.make(HttpServerRequest.HttpServerRequest, req))),
   );
   const web = HttpServerResponse.toWeb(response);
-  const json = await web.json() as { readonly errors?: unknown };
+  if (web.status !== 200) throw new Error(`unexpected HTTP status ${web.status}`);
+  return (await web.text()).length;
+};
+
+const runHttpChecked = (source: string) => async () => {
+  resetBatchCounters();
+  const req = HttpServerRequest.fromWeb(makeRequest(source));
+  const response = await Effect.runPromise(
+    app.pipe(Effect.provide(Context.make(HttpServerRequest.HttpServerRequest, req))),
+  );
+  const json = await HttpServerResponse.toWeb(response).json() as { readonly errors?: unknown };
   if (json.errors !== undefined) throw new Error(JSON.stringify(json));
   return json;
 };
 
 export const main = async (): Promise<BenchResult[]> => {
-  const artifactShape = await runArtifact();
-  if (batchCalls !== 1 || requestsBatched !== USER_COUNT) {
-    throw new Error(`expected one artifact batch of ${USER_COUNT}, got ${batchCalls}/${requestsBatched}`);
-  }
-  const _ = artifactShape;
+  const firehoseArtifactShape = await runArtifact(firehose.artifact)();
+  expectBatch("firehose artifact", USER_COUNT);
+  const smallArtifactShape = await runArtifact(small.artifact)();
+  expectBatch("small artifact", SMALL_USER_COUNT);
+  await runHttpChecked(firehoseSource)();
+  expectBatch("firehose HTTP", USER_COUNT);
+  await runHttpChecked(smallSource)();
+  expectBatch("small HTTP", SMALL_USER_COUNT);
+  const _ = [firehoseArtifactShape, smallArtifactShape];
 
   const results: BenchResult[] = [];
-  results.push(await benchAsync("alembic stack / artifact BFS scheduler", runArtifact));
-  results.push(await benchAsync("alembic stack / execute() cached artifact", runExecute));
-  results.push(await benchAsync("alembic stack / GraphQL.toHttpApp POST", runHttp));
+  results.push(await benchAsync("alembic stack firehose / artifact BFS scheduler", runArtifact(firehose.artifact)));
+  results.push(await benchAsync("alembic stack firehose / execute() cached artifact", runExecute(firehose.document)));
+  results.push(await benchAsync("alembic stack firehose / GraphQL.toHttpApp POST", runHttp(firehoseSource)));
+  results.push(await benchAsync("alembic stack small / artifact BFS scheduler", runArtifact(small.artifact)));
+  results.push(await benchAsync("alembic stack small / execute() cached artifact", runExecute(small.document)));
+  results.push(await benchAsync("alembic stack small / GraphQL.toHttpApp POST", runHttp(smallSource)));
   return results;
 };
 
 if (import.meta.main) {
   const results = await main();
   console.log("\nAlembic + AlembicGraphQL stack\n");
-  console.log(`Batching shape: 1 batch call, ${USER_COUNT} requests batched`);
+  console.log(`Firehose shape: 1 batch call, ${USER_COUNT} requests batched`);
+  console.log(`Small shape: 1 batch call, ${SMALL_USER_COUNT} requests batched`);
   for (const result of results) console.log(formatResult(result));
   const agg = loadResults();
   agg.results["alembic-stack"] = {
-    setup: { users: USER_COUNT, postsPerUser: POSTS_PER_USER },
-    batching: { batchCalls: 1, requestsBatched: USER_COUNT },
+    setup: {
+      firehose: { users: USER_COUNT, postsPerUser: POSTS_PER_USER },
+      small: { users: SMALL_USER_COUNT, postsPerUser: SMALL_POSTS_PER_USER },
+    },
+    batching: {
+      firehose: { batchCalls: 1, requestsBatched: USER_COUNT },
+      small: { batchCalls: 1, requestsBatched: SMALL_USER_COUNT },
+    },
     benchmarks: results.map((result) => ({
       name: result.name,
       opsPerSec: result.opsPerSec,

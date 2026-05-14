@@ -363,7 +363,7 @@ function buildFieldConfig(
       resolve: def.invocation !== undefined
         ? (parent, args, _ctx, info) => def.invocation!.resolve(parent, args, info)
         : (parent, args, ctx, info) => def.resolve(parent, args, ctx, info!),
-      hasArgs: Object.keys(def.args ?? {}).length > 0,
+      hasArgs: Object.keys(args).length > 0,
       needsInfo: def.invocation?.needsInfo ?? true,
       sync: def.invocation?.sync ?? false,
     },

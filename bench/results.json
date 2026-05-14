@@ -6,7 +6,7 @@
     "cpu": "arm64"
   },
   "harness": "mitata",
-  "timestamp": "2026-05-14T17:18:43.610Z",
+  "timestamp": "2026-05-14T17:57:13.311Z",
   "results": {
     "resolver-throughput": [
       {
@@ -416,47 +416,47 @@
     "pagination": [
       {
         "name": "connection page first:10 of 1000 / default",
-        "opsPerSec": 617599.939687506,
-        "msPerOp": 0.001619171142578125,
+        "opsPerSec": 612806.7025733094,
+        "msPerOp": 0.0016318359375,
         "stats": {
-          "min": 1546.406982421875,
-          "max": 2302.50048828125,
-          "avg": 1684.8151439319956,
-          "p50": 1619.171142578125,
-          "p75": 1789.276123046875,
-          "p99": 2008.951904296875,
-          "samples": 88,
-          "ticks": 360448
+          "min": 1532.562255859375,
+          "max": 2530.476806640625,
+          "avg": 1699.9443836431394,
+          "p50": 1631.8359375,
+          "p75": 1800.79150390625,
+          "p99": 2023.335693359375,
+          "samples": 87,
+          "ticks": 356352
         }
       },
       {
         "name": "connection page first:10 of 1000 / compiled artifact",
-        "opsPerSec": 647281.9216182048,
-        "msPerOp": 0.001544921875,
+        "opsPerSec": 629298.6776584989,
+        "msPerOp": 0.001589070556640625,
         "stats": {
-          "min": 1490.071533203125,
-          "max": 1790.079833984375,
-          "avg": 1597.5393169202302,
-          "p50": 1544.921875,
-          "p75": 1703.5625,
-          "p99": 1784.0068359375,
-          "samples": 95,
-          "ticks": 389120
+          "min": 1486.236572265625,
+          "max": 1853.8310546875,
+          "avg": 1628.2232862903227,
+          "p50": 1589.070556640625,
+          "p75": 1733.26611328125,
+          "p99": 1821.33984375,
+          "samples": 93,
+          "ticks": 380928
         }
       },
       {
         "name": "connection page first:10 of 1000 / bfs",
-        "opsPerSec": 9063.471490850425,
-        "msPerOp": 0.110333,
+        "opsPerSec": 8995.556195239551,
+        "msPerOp": 0.111166,
         "stats": {
-          "min": 90333,
-          "max": 1726334,
-          "avg": 124209.28752683975,
-          "p50": 110333,
-          "p75": 119834,
-          "p99": 303000,
-          "samples": 5123,
-          "ticks": 5123
+          "min": 89625,
+          "max": 1974167,
+          "avg": 126737.42407333599,
+          "p50": 111166,
+          "p75": 121209,
+          "p99": 343417,
+          "samples": 5018,
+          "ticks": 5018
         }
       }
     ],
@@ -601,57 +601,439 @@
     },
     "alembic-stack": {
       "setup": {
-        "users": 100,
-        "postsPerUser": 5
+        "firehose": {
+          "users": 100,
+          "postsPerUser": 5
+        },
+        "small": {
+          "users": 3,
+          "postsPerUser": 2
+        }
       },
       "batching": {
-        "batchCalls": 1,
-        "requestsBatched": 100
+        "firehose": {
+          "batchCalls": 1,
+          "requestsBatched": 100
+        },
+        "small": {
+          "batchCalls": 1,
+          "requestsBatched": 3
+        }
       },
       "benchmarks": [
         {
-          "name": "alembic stack / artifact BFS scheduler",
-          "opsPerSec": 1965.6019656019655,
-          "msPerOp": 0.50875,
+          "name": "alembic stack firehose / artifact BFS scheduler",
+          "opsPerSec": 1865.3827858745753,
+          "msPerOp": 0.536083,
           "stats": {
-            "min": 383875,
-            "max": 3821208,
-            "avg": 627095.3920792079,
-            "p50": 508750,
-            "p75": 592292,
-            "p99": 2556834,
-            "samples": 1010,
-            "ticks": 1010
+            "min": 382084,
+            "max": 4040167,
+            "avg": 660169.1722338204,
+            "p50": 536083,
+            "p75": 613625,
+            "p99": 2814958,
+            "samples": 958,
+            "ticks": 958
           }
         },
         {
-          "name": "alembic stack / execute() cached artifact",
-          "opsPerSec": 1946.1538162130182,
-          "msPerOp": 0.513834,
+          "name": "alembic stack firehose / execute() cached artifact",
+          "opsPerSec": 1953.4454871502355,
+          "msPerOp": 0.511916,
           "stats": {
-            "min": 381875,
-            "max": 3568959,
-            "avg": 621225.4348677767,
-            "p50": 513834,
-            "p75": 579500,
-            "p99": 2509042,
-            "samples": 1021,
-            "ticks": 1021
+            "min": 385542,
+            "max": 4189959,
+            "avg": 623205.5029585799,
+            "p50": 511916,
+            "p75": 590292,
+            "p99": 2390500,
+            "samples": 1014,
+            "ticks": 1014
           }
         },
         {
-          "name": "alembic stack / GraphQL.toHttpApp POST",
-          "opsPerSec": 1053.3245556287031,
-          "msPerOp": 0.949375,
+          "name": "alembic stack firehose / GraphQL.toHttpApp POST",
+          "opsPerSec": 1341.5327816950535,
+          "msPerOp": 0.745416,
           "stats": {
-            "min": 724291,
-            "max": 4271334,
-            "avg": 1132220.906642729,
-            "p50": 949375,
-            "p75": 1103792,
-            "p99": 2927375,
-            "samples": 557,
-            "ticks": 557
+            "min": 579250,
+            "max": 4320917,
+            "avg": 868000.8463648834,
+            "p50": 745416,
+            "p75": 852833,
+            "p99": 2512209,
+            "samples": 729,
+            "ticks": 729
+          }
+        },
+        {
+          "name": "alembic stack small / artifact BFS scheduler",
+          "opsPerSec": 32511.140145365436,
+          "msPerOp": 0.0307586875,
+          "stats": {
+            "min": 29543.212890625,
+            "max": 34559.010986328125,
+            "avg": 31406.482259114582,
+            "p50": 30758.6875,
+            "p75": 31470.346923828125,
+            "p99": 34268.56494140625,
+            "samples": 12,
+            "ticks": 49152
+          }
+        },
+        {
+          "name": "alembic stack small / execute() cached artifact",
+          "opsPerSec": 30387.466084238255,
+          "msPerOp": 0.032908304931640625,
+          "stats": {
+            "min": 30289.021728515625,
+            "max": 38068.29833984375,
+            "avg": 33345.67683919271,
+            "p50": 32908.304931640625,
+            "p75": 33078.206298828125,
+            "p99": 36294.331787109375,
+            "samples": 12,
+            "ticks": 49152
+          }
+        },
+        {
+          "name": "alembic stack small / GraphQL.toHttpApp POST",
+          "opsPerSec": 20390.685534847682,
+          "msPerOp": 0.049042,
+          "stats": {
+            "min": 33708,
+            "max": 2465333,
+            "avg": 64790.023109029826,
+            "p50": 49042,
+            "p75": 57333,
+            "p99": 442250,
+            "samples": 9823,
+            "ticks": 9823
+          }
+        }
+      ]
+    },
+    "island-suspension": {
+      "setup": {
+        "fields": 100,
+        "shapes": [
+          "100 field islands",
+          "1 coarse island + 100 projections"
+        ]
+      },
+      "benchmarks": [
+        {
+          "name": "100 field islands succeed / artifact BFS scheduler",
+          "opsPerSec": 44922.89176463151,
+          "msPerOp": 0.02226036572265625,
+          "stats": {
+            "min": 21715.138916015625,
+            "max": 28989.288330078125,
+            "avg": 22994.19826253255,
+            "p50": 22260.36572265625,
+            "p75": 22403.33056640625,
+            "p99": 25091.349365234375,
+            "samples": 12,
+            "ticks": 49152
+          }
+        },
+        {
+          "name": "100 field islands suspend once / artifact BFS scheduler",
+          "opsPerSec": 7687.399583342943,
+          "msPerOp": 0.130083,
+          "stats": {
+            "min": 111333,
+            "max": 1358500,
+            "avg": 143783.70256872466,
+            "p50": 130083,
+            "p75": 138875,
+            "p99": 902750,
+            "samples": 4438,
+            "ticks": 4438
+          }
+        },
+        {
+          "name": "100 field islands succeed / execute() cached artifact",
+          "opsPerSec": 44977.48226947239,
+          "msPerOp": 0.02223334765625,
+          "stats": {
+            "min": 21760.477783203125,
+            "max": 23834.981201171875,
+            "avg": 22611.998697916668,
+            "p50": 22233.34765625,
+            "p75": 22930.908203125,
+            "p99": 23665.934326171875,
+            "samples": 12,
+            "ticks": 49152
+          }
+        },
+        {
+          "name": "100 field islands suspend once / execute() cached artifact",
+          "opsPerSec": 7892.161505193042,
+          "msPerOp": 0.126708,
+          "stats": {
+            "min": 111625,
+            "max": 1311250,
+            "avg": 140038.4625328659,
+            "p50": 126708,
+            "p75": 134167,
+            "p99": 897875,
+            "samples": 4564,
+            "ticks": 4564
+          }
+        },
+        {
+          "name": "100 field islands succeed / legacy BFS executor",
+          "opsPerSec": 5755.395683453237,
+          "msPerOp": 0.17375,
+          "stats": {
+            "min": 151333,
+            "max": 1493541,
+            "avg": 192069.25332125605,
+            "p50": 173750,
+            "p75": 184125,
+            "p99": 1146875,
+            "samples": 3312,
+            "ticks": 3312
+          }
+        },
+        {
+          "name": "100 field islands suspend once / legacy BFS executor",
+          "opsPerSec": 4840.669367760174,
+          "msPerOp": 0.206583,
+          "stats": {
+            "min": 180375,
+            "max": 1502334,
+            "avg": 229703.29222423147,
+            "p50": 206583,
+            "p75": 221584,
+            "p99": 1225959,
+            "samples": 2765,
+            "ticks": 2765
+          }
+        },
+        {
+          "name": "1 coarse island + 100 projections succeed / artifact BFS scheduler",
+          "opsPerSec": 70287.48094507422,
+          "msPerOp": 0.01422728466796875,
+          "stats": {
+            "min": 13990.041259765625,
+            "max": 20740.864990234375,
+            "avg": 14884.863159179688,
+            "p50": 14227.28466796875,
+            "p75": 14428.67041015625,
+            "p99": 15741.0380859375,
+            "samples": 12,
+            "ticks": 49152
+          }
+        },
+        {
+          "name": "1 coarse island + 100 projections suspend once / artifact BFS scheduler",
+          "opsPerSec": 65114.880708775476,
+          "msPerOp": 0.01535747265625,
+          "stats": {
+            "min": 14948.577880859375,
+            "max": 20637.929443359375,
+            "avg": 15869.375447591146,
+            "p50": 15357.47265625,
+            "p75": 15649.648193359375,
+            "p99": 16041.32080078125,
+            "samples": 12,
+            "ticks": 49152
+          }
+        },
+        {
+          "name": "1 coarse island + 100 projections succeed / execute() cached artifact",
+          "opsPerSec": 71285.30219242333,
+          "msPerOp": 0.01402813720703125,
+          "stats": {
+            "min": 13591.97998046875,
+            "max": 173170.98999023438,
+            "avg": 28059.953470865887,
+            "p50": 14028.13720703125,
+            "p75": 14527.923583984375,
+            "p99": 20875.203369140625,
+            "samples": 12,
+            "ticks": 49152
+          }
+        },
+        {
+          "name": "1 coarse island + 100 projections suspend once / execute() cached artifact",
+          "opsPerSec": 64816.83491957609,
+          "msPerOp": 0.015428090576171874,
+          "stats": {
+            "min": 14910.756591796875,
+            "max": 102210.28637695312,
+            "avg": 29358.87314860026,
+            "p50": 15428.090576171875,
+            "p75": 17674.998046875,
+            "p99": 92718.75,
+            "samples": 12,
+            "ticks": 49152
+          }
+        }
+      ]
+    },
+    "http-competitors": {
+      "setup": {
+        "firehose": {
+          "users": 100,
+          "postsPerUser": 5
+        },
+        "small": {
+          "users": 3,
+          "postsPerUser": 2
+        }
+      },
+      "benchmarks": [
+        {
+          "name": "matched firehose POST / AlembicGraphQL",
+          "opsPerSec": 1085.2354798205888,
+          "msPerOp": 0.921459,
+          "stats": {
+            "min": 611709,
+            "max": 6111250,
+            "avg": 1130796.6978417267,
+            "p50": 921459,
+            "p75": 1095375,
+            "p99": 3441542,
+            "samples": 556,
+            "ticks": 556
+          }
+        },
+        {
+          "name": "matched firehose POST / GraphQL Yoga sync",
+          "opsPerSec": 1681.8481492942965,
+          "msPerOp": 0.594584,
+          "stats": {
+            "min": 521375,
+            "max": 2690000,
+            "avg": 651770.5780287475,
+            "p50": 594584,
+            "p75": 641709,
+            "p99": 2101125,
+            "samples": 974,
+            "ticks": 974
+          }
+        },
+        {
+          "name": "matched firehose POST / GraphQL Yoga promise posts",
+          "opsPerSec": 1483.8622560344968,
+          "msPerOp": 0.673917,
+          "stats": {
+            "min": 589041,
+            "max": 2667917,
+            "avg": 744103.2587822014,
+            "p50": 673917,
+            "p75": 742167,
+            "p99": 2441125,
+            "samples": 854,
+            "ticks": 854
+          }
+        },
+        {
+          "name": "matched firehose POST / Apollo Server sync",
+          "opsPerSec": 807.9443552563648,
+          "msPerOp": 1.237709,
+          "stats": {
+            "min": 1070583,
+            "max": 3595250,
+            "avg": 1401268.539823009,
+            "p50": 1237709,
+            "p75": 1387875,
+            "p99": 3083292,
+            "samples": 452,
+            "ticks": 452
+          }
+        },
+        {
+          "name": "matched firehose POST / Apollo Server promise posts",
+          "opsPerSec": 810.4824558915185,
+          "msPerOp": 1.233833,
+          "stats": {
+            "min": 1140208,
+            "max": 3465250,
+            "avg": 1378083.962962963,
+            "p50": 1233833,
+            "p75": 1353500,
+            "p99": 3356750,
+            "samples": 459,
+            "ticks": 459
+          }
+        },
+        {
+          "name": "matched small POST / AlembicGraphQL",
+          "opsPerSec": 18957.34597156398,
+          "msPerOp": 0.05275,
+          "stats": {
+            "min": 34792,
+            "max": 3100625,
+            "avg": 71437.08455965588,
+            "p50": 52750,
+            "p75": 60916,
+            "p99": 350750,
+            "samples": 8834,
+            "ticks": 8834
+          }
+        },
+        {
+          "name": "matched small POST / GraphQL Yoga sync",
+          "opsPerSec": 23836.034248144733,
+          "msPerOp": 0.04195328759765625,
+          "stats": {
+            "min": 40156.544921875,
+            "max": 46594.23828125,
+            "avg": 42397.00313313802,
+            "p50": 41953.28759765625,
+            "p75": 42341.145751953125,
+            "p99": 45573.689697265625,
+            "samples": 12,
+            "ticks": 49152
+          }
+        },
+        {
+          "name": "matched small POST / GraphQL Yoga promise posts",
+          "opsPerSec": 20932.241068280193,
+          "msPerOp": 0.047773193359375,
+          "stats": {
+            "min": 45978.230712890625,
+            "max": 50833.11962890625,
+            "avg": 48156.30586751302,
+            "p50": 47773.193359375,
+            "p75": 49148.98681640625,
+            "p99": 50086.10009765625,
+            "samples": 12,
+            "ticks": 49152
+          }
+        },
+        {
+          "name": "matched small POST / Apollo Server sync",
+          "opsPerSec": 23598.82005899705,
+          "msPerOp": 0.042375,
+          "stats": {
+            "min": 35416,
+            "max": 4660000,
+            "avg": 54064.056455104335,
+            "p50": 42375,
+            "p75": 46875,
+            "p99": 219375,
+            "samples": 11549,
+            "ticks": 11549
+          }
+        },
+        {
+          "name": "matched small POST / Apollo Server promise posts",
+          "opsPerSec": 20171.402752145612,
+          "msPerOp": 0.04957513427734375,
+          "stats": {
+            "min": 48208.475830078125,
+            "max": 53125.1220703125,
+            "avg": 49690.307637532555,
+            "p50": 49575.13427734375,
+            "p75": 50429.443359375,
+            "p99": 50551.94091796875,
+            "samples": 12,
+            "ticks": 49152
           }
         }
       ]

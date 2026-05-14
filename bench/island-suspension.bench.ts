@@ -1,13 +1,14 @@
 /**
  * Effect island suspension benchmark.
  *
- * Same GraphQL query shape, two resolver variants:
- *   1. Effect.succeed islands: resolver effects complete synchronously.
- *   2. Effect.promise islands: resolver effects actually suspend once.
+ * Same 100-field GraphQL query, two schema shapes:
+ *   1. Worst case: 100 field resolver islands, 0 projection children.
+ *   2. Target case: 1 resolver island feeding 100 projection children.
  *
- * This scores the artifact scheduler's intended value proposition: static
- * projection/completion stays in compiled JS, while Effect is paid only at real
- * resolver islands.
+ * Each shape has Effect.succeed and Effect.promise variants. The worst case
+ * scores raw suspension cost; the target case scores the intended architecture:
+ * static projection/completion stays in compiled JS while Effect is paid only at
+ * the coarse resolver island.
  */
 import { Context, Effect, Layer, Schema } from "effect";
 import { parseSync as parse } from "../src/alembic-graphql/language/parser.ts";
@@ -37,7 +38,7 @@ class IslandRow extends Schema.Class<IslandRow>("IslandRow")({
 const seed: Record<string, string> = { id: "1" };
 for (let i = 0; i < FIELD_COUNT; i++) seed[`f${i}`] = `v${i}`;
 
-const buildSchemaFor = (mode: "succeed" | "suspend") => {
+const buildFieldIslandSchemaFor = (mode: "succeed" | "suspend") => {
   const RowNode = GraphQL.Node.layer(IslandRow)({
     fields: (field) => {
       const out: Record<string, unknown> = {};
@@ -66,10 +67,32 @@ const buildSchemaFor = (mode: "succeed" | "suspend") => {
   return buildSchema(Layer.mergeAll(RowNode, QueryLayer));
 };
 
+const buildCoarseIslandSchemaFor = (mode: "succeed" | "suspend") => {
+  const RowNode = GraphQL.Node.layer(IslandRow)({
+    fields: () => buildSiblingFields(),
+    load: () => Effect.succeed(new IslandRow(seed as never)),
+  });
+
+  const QueryLayer = GraphQL.Query.layer({
+    row: GraphQL.queryField(IslandRow, {
+      resolve: () => {
+        const row = new IslandRow(seed as never);
+        return mode === "succeed"
+          ? Effect.succeed(row)
+          : Effect.promise(() => Promise.resolve(row));
+      },
+    }),
+  });
+
+  return buildSchema(Layer.mergeAll(RowNode, QueryLayer));
+};
+
 const selection = Array.from({ length: FIELD_COUNT }, (_, i) => `f${i}`).join(" ");
 const document = parse(`{ row { ${selection} } }`);
-const succeedSchema = buildSchemaFor("succeed");
-const suspendSchema = buildSchemaFor("suspend");
+const fieldSucceedSchema = buildFieldIslandSchemaFor("succeed");
+const fieldSuspendSchema = buildFieldIslandSchemaFor("suspend");
+const coarseSucceedSchema = buildCoarseIslandSchemaFor("succeed");
+const coarseSuspendSchema = buildCoarseIslandSchemaFor("suspend");
 
 const compileHotArtifact = async (schema: ReturnType<typeof buildSchema>) => {
   const artifact = compileExecutionArtifact({ schema, document, contextValue: EMPTY_CTX });
@@ -97,16 +120,22 @@ const runLegacyBfs = (schema: ReturnType<typeof buildSchema>) => async () => {
 };
 
 export const main = async (): Promise<BenchResult[]> => {
-  const succeedArtifact = await compileHotArtifact(succeedSchema);
-  const suspendArtifact = await compileHotArtifact(suspendSchema);
+  const fieldSucceedArtifact = await compileHotArtifact(fieldSucceedSchema);
+  const fieldSuspendArtifact = await compileHotArtifact(fieldSuspendSchema);
+  const coarseSucceedArtifact = await compileHotArtifact(coarseSucceedSchema);
+  const coarseSuspendArtifact = await compileHotArtifact(coarseSuspendSchema);
 
   const results: BenchResult[] = [];
-  results.push(await benchAsync("islands succeed / artifact BFS scheduler", runArtifact(succeedArtifact)));
-  results.push(await benchAsync("islands suspend once / artifact BFS scheduler", runArtifact(suspendArtifact)));
-  results.push(await benchAsync("islands succeed / execute() cached artifact", runExecute(succeedSchema)));
-  results.push(await benchAsync("islands suspend once / execute() cached artifact", runExecute(suspendSchema)));
-  results.push(await benchAsync("islands succeed / legacy BFS executor", runLegacyBfs(succeedSchema)));
-  results.push(await benchAsync("islands suspend once / legacy BFS executor", runLegacyBfs(suspendSchema)));
+  results.push(await benchAsync("100 field islands succeed / artifact BFS scheduler", runArtifact(fieldSucceedArtifact)));
+  results.push(await benchAsync("100 field islands suspend once / artifact BFS scheduler", runArtifact(fieldSuspendArtifact)));
+  results.push(await benchAsync("100 field islands succeed / execute() cached artifact", runExecute(fieldSucceedSchema)));
+  results.push(await benchAsync("100 field islands suspend once / execute() cached artifact", runExecute(fieldSuspendSchema)));
+  results.push(await benchAsync("100 field islands succeed / legacy BFS executor", runLegacyBfs(fieldSucceedSchema)));
+  results.push(await benchAsync("100 field islands suspend once / legacy BFS executor", runLegacyBfs(fieldSuspendSchema)));
+  results.push(await benchAsync("1 coarse island + 100 projections succeed / artifact BFS scheduler", runArtifact(coarseSucceedArtifact)));
+  results.push(await benchAsync("1 coarse island + 100 projections suspend once / artifact BFS scheduler", runArtifact(coarseSuspendArtifact)));
+  results.push(await benchAsync("1 coarse island + 100 projections succeed / execute() cached artifact", runExecute(coarseSucceedSchema)));
+  results.push(await benchAsync("1 coarse island + 100 projections suspend once / execute() cached artifact", runExecute(coarseSuspendSchema)));
   return results;
 };
 
@@ -116,7 +145,10 @@ if (import.meta.main) {
   for (const result of results) console.log(formatResult(result));
   const agg = loadResults();
   agg.results["island-suspension"] = {
-    setup: { fields: FIELD_COUNT },
+    setup: {
+      fields: FIELD_COUNT,
+      shapes: ["100 field islands", "1 coarse island + 100 projections"],
+    },
     benchmarks: results.map((result) => ({
       name: result.name,
       opsPerSec: result.opsPerSec,

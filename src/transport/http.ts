@@ -78,6 +78,8 @@ export interface ToHttpAppOptions {
    *    auto-batching.
    */
   readonly executor?: "default" | "bfs";
+  /** Enable Effect spans for HTTP dispatch, parsing, validation, and execution. */
+  readonly trace?: boolean;
   /**
    * Suppress lint warnings by code (e.g. `["RELAY-104"]`). Errors are NEVER
    * mutable. See `src/lint.ts` for the full set.
@@ -130,6 +132,7 @@ export const toHttpApp = <R>(
   const graphiqlEnabled = graphiqlOpt !== false;
   const graphiqlConfig = typeof graphiqlOpt === "object" ? graphiqlOpt : {};
   const executorKind = options?.executor ?? "default";
+  const trace = options?.trace === true;
   const pq = options?.persistedQueries;
   const pqField = pq?.field ?? DEFAULT_PQ_FIELD;
   const pqRequired = pq?.required === true;
@@ -172,6 +175,7 @@ export const toHttpApp = <R>(
       schema,
       documentCache,
       afterPq.query,
+      trace,
     );
 
     if (req.method === "GET" && containsMutation(document, afterPq.operationName)) {
@@ -205,27 +209,34 @@ export const toHttpApp = <R>(
             contextValue,
             variableValues: afterPq.variables,
             operationName: afterPq.operationName,
+            options: { trace },
           });
 
-    const result: ExecutionResult = yield* executeEff.pipe(
-      Effect.withSpan("graphql.execute", {
-        attributes: {
-          "graphql.operation_name": afterPq.operationName ?? "anonymous",
-        },
-      }),
-    );
+    const tracedExecuteEff = trace
+      ? executeEff.pipe(
+          Effect.withSpan("graphql.execute", {
+            attributes: {
+              "graphql.operation_name": afterPq.operationName ?? "anonymous",
+            },
+          }),
+        )
+      : executeEff;
+
+    const result: ExecutionResult = yield* tracedExecuteEff;
 
     return yield* jsonResponse(result, 200);
   });
 
-  const tracedDispatch = Effect.gen(function* () {
-    const req = yield* HttpServerRequest.HttpServerRequest;
-    return yield* dispatch.pipe(
-      Effect.withSpan("graphql.http_request", {
-        attributes: { "http.method": req.method },
-      }),
-    );
-  });
+  const tracedDispatch = trace
+    ? Effect.gen(function* () {
+        const req = yield* HttpServerRequest.HttpServerRequest;
+        return yield* dispatch.pipe(
+          Effect.withSpan("graphql.http_request", {
+            attributes: { "http.method": req.method },
+          }),
+        );
+      })
+    : dispatch;
 
   return tracedDispatch.pipe(
     Effect.catchTags({
@@ -380,8 +391,9 @@ const applyPersistedQuery = (
 
 const parseDocument = (
   source: string,
+  trace: boolean,
 ): Effect.Effect<DocumentNode, OperationParseError, never> =>
-  Effect.try({
+  (trace ? Effect.try({
     try: () => parseSync(new Source(source, "GraphQL request")),
     catch: (err) =>
       new OperationParseError({
@@ -393,32 +405,46 @@ const parseDocument = (
     Effect.withSpan("graphql.parse", {
       attributes: { "graphql.source": source.slice(0, 200) },
     }),
-  );
+  ) : Effect.try({
+    try: () => parseSync(new Source(source, "GraphQL request")),
+    catch: (err) =>
+      new OperationParseError({
+        errors: isGraphQLError(err)
+          ? [err]
+          : [new GraphQLSyntaxError(new Source(source, "GraphQL request"), 0, String(err))],
+      }),
+  }));
 
 const validateDocument = (
   schema: GraphQLSchema,
   document: DocumentNode,
+  trace: boolean,
 ): Effect.Effect<void, OperationValidationError, never> =>
-  Effect.suspend(() => {
+  (trace ? Effect.suspend(() => {
     // alembic's validateSync expects its own GraphQLSchema; structurally
     // equivalent to Alembic's visitor keys, but we cast to satisfy the bridge
     // into typed visitor utilities.
     const errors = validateSync(schema, document);
     if (errors.length === 0) return Effect.void;
     return Effect.fail(new OperationValidationError({ errors }));
-  }).pipe(Effect.withSpan("graphql.validate"));
+  }).pipe(Effect.withSpan("graphql.validate")) : Effect.suspend(() => {
+    const errors = validateSync(schema, document);
+    if (errors.length === 0) return Effect.void;
+    return Effect.fail(new OperationValidationError({ errors }));
+  }));
 
 const getValidatedDocument = (
   schema: GraphQLSchema,
   cache: Map<string, DocumentNode>,
   source: string,
+  trace: boolean,
 ): Effect.Effect<DocumentNode, OperationParseError | OperationValidationError, never> => {
   const cached = cache.get(source);
   if (cached !== undefined) return Effect.succeed(cached);
 
   return Effect.gen(function* () {
-    const document = yield* parseDocument(source);
-    yield* validateDocument(schema, document);
+    const document = yield* parseDocument(source, trace);
+    yield* validateDocument(schema, document, trace);
     cache.set(source, document);
     return document;
   });
