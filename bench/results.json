@@ -6,7 +6,7 @@
     "cpu": "arm64"
   },
   "harness": "mitata",
-  "timestamp": "2026-05-14T18:09:08.703Z",
+  "timestamp": "2026-05-14T18:38:22.176Z",
   "results": {
     "resolver-throughput": [
       {
@@ -888,182 +888,406 @@
       "benchmarks": [
         {
           "name": "matched firehose POST / AlembicGraphQL sync",
-          "opsPerSec": 2314.58978525236,
-          "msPerOp": 0.432042,
+          "opsPerSec": 2378.1212841854936,
+          "msPerOp": 0.4205,
           "stats": {
-            "min": 374917,
-            "max": 1869583,
-            "avg": 479265.19864341087,
-            "p50": 432042,
-            "p75": 482333,
-            "p99": 1592041,
-            "samples": 1032,
-            "ticks": 1032
+            "min": 377000,
+            "max": 1978167,
+            "avg": 468119.86092715233,
+            "p50": 420500,
+            "p75": 455792,
+            "p99": 1556666,
+            "samples": 1057,
+            "ticks": 1057
           }
         },
         {
           "name": "matched firehose POST / AlembicGraphQL promise posts",
-          "opsPerSec": 1632.3199347072027,
-          "msPerOp": 0.612625,
+          "opsPerSec": 1650.5054672993604,
+          "msPerOp": 0.605875,
           "stats": {
-            "min": 511875,
-            "max": 2812666,
-            "avg": 664963.9649595687,
-            "p50": 612625,
-            "p75": 668458,
-            "p99": 2108125,
-            "samples": 742,
-            "ticks": 742
+            "min": 517792,
+            "max": 2493625,
+            "avg": 663087.3172043011,
+            "p50": 605875,
+            "p75": 658959,
+            "p99": 2028583,
+            "samples": 744,
+            "ticks": 744
           }
         },
         {
           "name": "matched firehose POST / GraphQL Yoga sync",
-          "opsPerSec": 1689.545934530095,
-          "msPerOp": 0.591875,
+          "opsPerSec": 1755.41149478555,
+          "msPerOp": 0.569667,
           "stats": {
-            "min": 534083,
-            "max": 2217083,
-            "avg": 646817.5667539267,
-            "p50": 591875,
-            "p75": 638667,
-            "p99": 2075416,
-            "samples": 764,
-            "ticks": 764
+            "min": 529708,
+            "max": 2282167,
+            "avg": 619852.4285714285,
+            "p50": 569667,
+            "p75": 598625,
+            "p99": 2030708,
+            "samples": 798,
+            "ticks": 798
           }
         },
         {
           "name": "matched firehose POST / GraphQL Yoga promise posts",
-          "opsPerSec": 1513.3355125364715,
-          "msPerOp": 0.660792,
+          "opsPerSec": 1567.2949429661371,
+          "msPerOp": 0.638042,
           "stats": {
-            "min": 592375,
-            "max": 3215583,
-            "avg": 746688.9863429439,
-            "p50": 660792,
-            "p75": 719625,
-            "p99": 2465333,
-            "samples": 659,
-            "ticks": 659
+            "min": 597583,
+            "max": 2385500,
+            "avg": 701399.9346590909,
+            "p50": 638042,
+            "p75": 674125,
+            "p99": 2160875,
+            "samples": 704,
+            "ticks": 704
           }
         },
         {
           "name": "matched firehose POST / Apollo Server sync",
-          "opsPerSec": 824.9123530624871,
-          "msPerOp": 1.21225,
+          "opsPerSec": 887.3775862619751,
+          "msPerOp": 1.126916,
           "stats": {
-            "min": 1059167,
-            "max": 3066042,
-            "avg": 1344422.9561643836,
-            "p50": 1212250,
-            "p75": 1301667,
-            "p99": 2970542,
-            "samples": 365,
-            "ticks": 365
+            "min": 1035542,
+            "max": 3031583,
+            "avg": 1260925,
+            "p50": 1126916,
+            "p75": 1219459,
+            "p99": 2862583,
+            "samples": 390,
+            "ticks": 390
           }
         },
         {
           "name": "matched firehose POST / Apollo Server promise posts",
-          "opsPerSec": 770.4409541757129,
-          "msPerOp": 1.297958,
+          "opsPerSec": 820.1205085075201,
+          "msPerOp": 1.219333,
           "stats": {
-            "min": 1140583,
-            "max": 3678000,
-            "avg": 1424932.3507246377,
-            "p50": 1297958,
-            "p75": 1394708,
-            "p99": 3370250,
-            "samples": 345,
-            "ticks": 345
+            "min": 1126375,
+            "max": 3203209,
+            "avg": 1332872.6802168023,
+            "p50": 1219333,
+            "p75": 1291333,
+            "p99": 3067083,
+            "samples": 369,
+            "ticks": 369
           }
         },
         {
           "name": "matched small POST / AlembicGraphQL sync",
-          "opsPerSec": 34922.65816336318,
-          "msPerOp": 0.02863470458984375,
+          "opsPerSec": 35588.16011801368,
+          "msPerOp": 0.02809923291015625,
           "stats": {
-            "min": 28042.551513671875,
-            "max": 30238.88134765625,
-            "avg": 28704.523388671874,
-            "p50": 28634.70458984375,
-            "p75": 28966.5322265625,
-            "p99": 29731.842041015625,
+            "min": 26640.2587890625,
+            "max": 29755.69677734375,
+            "avg": 28209.613712565104,
+            "p50": 28099.23291015625,
+            "p75": 28938.751220703125,
+            "p99": 29684.061767578125,
             "samples": 60,
             "ticks": 245760
           }
         },
         {
           "name": "matched small POST / AlembicGraphQL promise posts",
-          "opsPerSec": 25703.658033412874,
-          "msPerOp": 0.03890496826171875,
+          "opsPerSec": 27497.706985951565,
+          "msPerOp": 0.036366668701171875,
           "stats": {
-            "min": 35934.7939453125,
-            "max": 60559.52978515625,
-            "avg": 40808.586958821616,
-            "p50": 38904.96826171875,
-            "p75": 42025.726318359375,
-            "p99": 53039.886474609375,
+            "min": 35235.870361328125,
+            "max": 37319.000244140625,
+            "avg": 36353.34353841146,
+            "p50": 36366.668701171875,
+            "p75": 36950.408935546875,
+            "p99": 37295.83740234375,
             "samples": 60,
             "ticks": 245760
           }
         },
         {
           "name": "matched small POST / GraphQL Yoga sync",
-          "opsPerSec": 24844.72049689441,
-          "msPerOp": 0.04025,
+          "opsPerSec": 23705.510014180305,
+          "msPerOp": 0.042184285400390625,
           "stats": {
-            "min": 34250,
-            "max": 2403541,
-            "avg": 50432.87132352941,
-            "p50": 40250,
-            "p75": 43833,
-            "p99": 204166,
-            "samples": 9792,
-            "ticks": 9792
+            "min": 41285.420654296875,
+            "max": 43143.12744140625,
+            "avg": 42198.08061523437,
+            "p50": 42184.285400390625,
+            "p75": 42581.18701171875,
+            "p99": 43093.18017578125,
+            "samples": 60,
+            "ticks": 245760
           }
         },
         {
           "name": "matched small POST / GraphQL Yoga promise posts",
-          "opsPerSec": 19181.470369941115,
-          "msPerOp": 0.05213364672851562,
+          "opsPerSec": 21822.288996153395,
+          "msPerOp": 0.04582470703125,
           "stats": {
-            "min": 47516.093017578125,
-            "max": 68089.25366210938,
-            "avg": 53046.064937337236,
-            "p50": 52133.646728515625,
-            "p75": 55494.333984375,
-            "p99": 67458.48608398438,
+            "min": 44167.694091796875,
+            "max": 47668.650390625,
+            "avg": 45818.83224283854,
+            "p50": 45824.70703125,
+            "p75": 46361.907958984375,
+            "p99": 47323.1708984375,
             "samples": 60,
             "ticks": 245760
           }
         },
         {
           "name": "matched small POST / Apollo Server sync",
-          "opsPerSec": 24464.831804281344,
-          "msPerOp": 0.040875,
+          "opsPerSec": 25477.707006369426,
+          "msPerOp": 0.03925,
           "stats": {
-            "min": 35167,
-            "max": 1899917,
-            "avg": 46272.64035824237,
-            "p50": 40875,
-            "p75": 44875,
-            "p99": 100708,
-            "samples": 10719,
-            "ticks": 10719
+            "min": 34292,
+            "max": 2103042,
+            "avg": 43683.64530103439,
+            "p50": 39250,
+            "p75": 43000,
+            "p99": 78125,
+            "samples": 11311,
+            "ticks": 11311
           }
         },
         {
           "name": "matched small POST / Apollo Server promise posts",
-          "opsPerSec": 20783.24489705756,
-          "msPerOp": 0.04811568188476562,
+          "opsPerSec": 21717.98394033561,
+          "msPerOp": 0.04604478955078125,
           "stats": {
-            "min": 46623.40283203125,
-            "max": 51323.40478515625,
-            "avg": 48308.98165690104,
-            "p50": 48115.681884765625,
-            "p75": 48604.35986328125,
-            "p99": 50438.710693359375,
+            "min": 44861.0126953125,
+            "max": 47272.450927734375,
+            "avg": 46055.15646565755,
+            "p50": 46044.78955078125,
+            "p75": 46534.759521484375,
+            "p99": 47256.78515625,
             "samples": 60,
             "ticks": 245760
+          }
+        }
+      ]
+    },
+    "http-batching-competitors": {
+      "setup": {
+        "firehose": {
+          "users": 100,
+          "postsPerUser": 5,
+          "batches": 1
+        },
+        "small": {
+          "users": 3,
+          "postsPerUser": 2,
+          "batches": 1
+        },
+        "asyncBoundary": "setTimeout(0)"
+      },
+      "baseline": {
+        "name": "batched async baseline / setTimeout(0)",
+        "opsPerSec": 878.252277966846,
+        "msPerOp": 1.138625,
+        "stats": {
+          "min": 1042167,
+          "max": 1944708,
+          "avg": 1154722.9205607476,
+          "p50": 1138625,
+          "p75": 1148459,
+          "p99": 1904250,
+          "samples": 428,
+          "ticks": 428
+        }
+      },
+      "benchmarks": [
+        {
+          "name": "batched async firehose POST / Alembic RequestResolver",
+          "opsPerSec": 405.2207014289298,
+          "msPerOp": 2.467791,
+          "residualMsPerOp": 1.329166,
+          "stats": {
+            "min": 1917542,
+            "max": 5312000,
+            "avg": 2762907.137142857,
+            "p50": 2467791,
+            "p75": 2670916,
+            "p99": 5184500,
+            "samples": 175,
+            "ticks": 175
+          }
+        },
+        {
+          "name": "batched async firehose POST / Yoga DataLoader",
+          "opsPerSec": 501.577712695283,
+          "msPerOp": 1.993709,
+          "residualMsPerOp": 0.855084,
+          "stats": {
+            "min": 1655667,
+            "max": 4337500,
+            "avg": 2159847.738938053,
+            "p50": 1993709,
+            "p75": 2114917,
+            "p99": 3715292,
+            "samples": 226,
+            "ticks": 226
+          }
+        },
+        {
+          "name": "batched async firehose POST / Apollo DataLoader",
+          "opsPerSec": 359.9442518342759,
+          "msPerOp": 2.778208,
+          "residualMsPerOp": 1.639583,
+          "stats": {
+            "min": 2482250,
+            "max": 5540750,
+            "avg": 3056185,
+            "p50": 2778208,
+            "p75": 2935875,
+            "p99": 5003916,
+            "samples": 159,
+            "ticks": 159
+          }
+        },
+        {
+          "name": "batched async small POST / Alembic RequestResolver",
+          "opsPerSec": 779.068607897886,
+          "msPerOp": 1.283584,
+          "residualMsPerOp": 0.144959,
+          "stats": {
+            "min": 1085125,
+            "max": 2847083,
+            "avg": 1369347.6833333333,
+            "p50": 1283584,
+            "p75": 1340500,
+            "p99": 2631667,
+            "samples": 360,
+            "ticks": 360
+          }
+        },
+        {
+          "name": "batched async small POST / Yoga DataLoader",
+          "opsPerSec": 825.2527336496802,
+          "msPerOp": 1.21175,
+          "residualMsPerOp": 0.073125,
+          "stats": {
+            "min": 1106209,
+            "max": 2552833,
+            "avg": 1288811.8851174936,
+            "p50": 1211750,
+            "p75": 1239708,
+            "p99": 2491708,
+            "samples": 383,
+            "ticks": 383
+          }
+        },
+        {
+          "name": "batched async small POST / Apollo DataLoader",
+          "opsPerSec": 814.5531320789759,
+          "msPerOp": 1.227667,
+          "residualMsPerOp": 0.089042,
+          "stats": {
+            "min": 1144583,
+            "max": 2710833,
+            "avg": 1317849.2459893047,
+            "p50": 1227667,
+            "p75": 1256209,
+            "p99": 2620250,
+            "samples": 374,
+            "ticks": 374
+          }
+        }
+      ]
+    },
+    "executor-batching-competitors": {
+      "setup": {
+        "firehose": {
+          "users": 100,
+          "postsPerUser": 5,
+          "batches": 1
+        },
+        "small": {
+          "users": 3,
+          "postsPerUser": 2,
+          "batches": 1
+        },
+        "asyncBoundary": "setTimeout(0)"
+      },
+      "baseline": {
+        "name": "executor batched async baseline / setTimeout(0)",
+        "opsPerSec": 877.513967828583,
+        "msPerOp": 1.139583,
+        "stats": {
+          "min": 1077583,
+          "max": 1883875,
+          "avg": 1151436.1302325581,
+          "p50": 1139583,
+          "p75": 1149750,
+          "p99": 1215083,
+          "samples": 430,
+          "ticks": 430
+        }
+      },
+      "benchmarks": [
+        {
+          "name": "executor batched async firehose / Alembic artifact RequestResolver",
+          "opsPerSec": 506.168933881683,
+          "msPerOp": 1.975625,
+          "residualMsPerOp": 0.836042,
+          "stats": {
+            "min": 1690875,
+            "max": 4639583,
+            "avg": 2190806.2376681613,
+            "p50": 1975625,
+            "p75": 2100667,
+            "p99": 4315125,
+            "samples": 223,
+            "ticks": 223
+          }
+        },
+        {
+          "name": "executor batched async firehose / GraphQL.js DataLoader",
+          "opsPerSec": 544.1682306968564,
+          "msPerOp": 1.837667,
+          "residualMsPerOp": 0.698084,
+          "stats": {
+            "min": 1699375,
+            "max": 3735416,
+            "avg": 1985737.0040650407,
+            "p50": 1837667,
+            "p75": 1919542,
+            "p99": 3305708,
+            "samples": 246,
+            "ticks": 246
+          }
+        },
+        {
+          "name": "executor batched async small / Alembic artifact RequestResolver",
+          "opsPerSec": 809.2795227193087,
+          "msPerOp": 1.235667,
+          "residualMsPerOp": 0.096084,
+          "stats": {
+            "min": 1117209,
+            "max": 2236792,
+            "avg": 1289017.2976501305,
+            "p50": 1235667,
+            "p75": 1274250,
+            "p99": 2135000,
+            "samples": 383,
+            "ticks": 383
+          }
+        },
+        {
+          "name": "executor batched async small / GraphQL.js DataLoader",
+          "opsPerSec": 828.0716281958389,
+          "msPerOp": 1.207625,
+          "residualMsPerOp": 0.068042,
+          "stats": {
+            "min": 1084209,
+            "max": 2381167,
+            "avg": 1271059.9226804124,
+            "p50": 1207625,
+            "p75": 1234375,
+            "p99": 2279625,
+            "samples": 388,
+            "ticks": 388
           }
         }
       ]
