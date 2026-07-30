@@ -701,13 +701,12 @@ export const Node = {
           // encode it as a global ID at resolve time. If the user DID supply an
           // `id` field we leave theirs untouched.
           if (!("id" in fields)) {
-            const globalIdPrefix = `${name}:`;
             const resolveId = (parent: unknown): string => {
               const rawId =
                 typeof parent === "object" && parent !== null
                   ? String((parent as Record<string, unknown>)["id"] ?? "")
                   : "";
-              return btoa(`${globalIdPrefix}${rawId}`);
+              return encodeGlobalId(name, rawId);
             };
             fields["id"] = {
               type: { kind: "scalar", name: "ID" },

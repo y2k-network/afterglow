@@ -10,6 +10,7 @@ import { memoize3 } from '../jsutils/memoize3.ts';
 import type { ObjMap } from '../jsutils/obj-map.ts';
 import type { Path } from '../jsutils/path.ts';
 import { addPath, pathToArray } from '../jsutils/path.ts';
+import { base64EncodeUtf8 } from '../jsutils/base64.ts';
 
 import type { GraphQLFormattedError } from '../error/graph-ql-error.ts';
 import {
@@ -231,6 +232,9 @@ export function execute<R = never>(
     variableValues == null || isObjectLike(variableValues),
     'Variables must be provided as an Object where each property is a variable value. Perhaps look to see if an unparsed JSON string was provided.',
   );
+  // Assert before the compiled-operation lookup: the cache WeakMap-keys on the
+  // schema, so a missing schema must fail with the schema assertion message.
+  assertValidSchema(schema);
 
   const compiled = getCompiledOperation(args);
   if (compiled !== null) {
@@ -878,6 +882,7 @@ class GraphExecutionArtifact {
       'FieldFailure',
       'EMPTY_ARGS',
       'isObjectLike',
+      'base64EncodeUtf8',
       'fallback',
       'rootFailure',
       'makeFrame',
@@ -895,6 +900,7 @@ class GraphExecutionArtifact {
       fieldFailure: typeof FieldFailure,
       emptyArgs: ObjMap<unknown>,
       objectLike: typeof isObjectLike,
+      encodeBase64: typeof base64EncodeUtf8,
       fallback: (frame: GraphFrame, idx: number, value: unknown) => unknown | FieldFailure | GraphUnsupported,
       rootFailure: (frame: GraphFrame, error: unknown) => ExecutionResult,
       makeFrame: (rootValue: unknown, context: Context.Context<unknown>) => GraphFrame,
@@ -914,6 +920,7 @@ class GraphExecutionArtifact {
       FieldFailure,
       EMPTY_ARGS,
       isObjectLike,
+      base64EncodeUtf8,
       (frame, idx, value) => this.completeNode(frame, idx, value, undefined),
       (frame, error) => this.generatedRootFailureResponse(frame, error),
       (rootValue, context) => new GraphFrame(rootValue, context),
@@ -987,7 +994,7 @@ class GraphExecutionArtifact {
         lines.push(`const ${childVar} = isObjectLike(${sourceExpr}) ? ${sourceExpr}[projectionKeys[${child}]] : undefined;`);
       } else if (relayGlobalId !== undefined) {
         lines.push(`const ${childVar}_raw = isObjectLike(${sourceExpr}) ? ${sourceExpr}[${JSON.stringify(relayGlobalId.key)}] : undefined;`);
-        lines.push(`const ${childVar} = btoa(${JSON.stringify(`${relayGlobalId.typename}:`)} + String(${childVar}_raw ?? ""));`);
+        lines.push(`const ${childVar} = base64EncodeUtf8(${JSON.stringify(`${relayGlobalId.typename}:`)} + String(${childVar}_raw ?? ""));`);
       }
       lines.push(`let ${completedVar};`);
       lines.push(`if (${childVar} == null || (typeof ${childVar} === "object" && ${childVar} instanceof Error)) {`);
@@ -1076,7 +1083,7 @@ class GraphExecutionArtifact {
           lines.push(`const ${childVar} = isObjectLike(item) ? item[projectionKeys[${child}]] : undefined;`);
         } else if (relayGlobalId !== undefined) {
           lines.push(`const raw${child} = isObjectLike(item) ? item[${JSON.stringify(relayGlobalId.key)}] : undefined;`);
-          lines.push(`const ${childVar} = btoa(${JSON.stringify(`${relayGlobalId.typename}:`)} + String(raw${child} ?? ""));`);
+          lines.push(`const ${childVar} = base64EncodeUtf8(${JSON.stringify(`${relayGlobalId.typename}:`)} + String(raw${child} ?? ""));`);
         } else {
           lines.push(`const r${child} = resolvers[${child}](item, argsList[${child}], frame.context, undefined);`);
           lines.push(`const ${childVar} = Exit.isExit(r${child}) && Exit.isSuccess(r${child}) ? r${child}.value : Effect.isEffect(r${child}) ? GRAPH_UNSUPPORTED_VALUE : r${child};`);
@@ -1136,7 +1143,7 @@ class GraphExecutionArtifact {
         lines.push(`const ${childVar} = isObjectLike(value) ? value[projectionKeys[${child}]] : undefined;`);
       } else if (relayGlobalId !== undefined) {
         lines.push(`const raw${child} = isObjectLike(value) ? value[${JSON.stringify(relayGlobalId.key)}] : undefined;`);
-        lines.push(`const ${childVar} = btoa(${JSON.stringify(`${relayGlobalId.typename}:`)} + String(raw${child} ?? ""));`);
+        lines.push(`const ${childVar} = base64EncodeUtf8(${JSON.stringify(`${relayGlobalId.typename}:`)} + String(raw${child} ?? ""));`);
       } else {
         lines.push(`const r${child} = resolvers[${child}](value, argsList[${child}], frame.context, undefined);`);
         lines.push(`const ${childVar} = Exit.isExit(r${child}) && Exit.isSuccess(r${child}) ? r${child}.value : Effect.isEffect(r${child}) ? GRAPH_UNSUPPORTED_VALUE : r${child};`);
@@ -1220,6 +1227,7 @@ class GraphExecutionArtifact {
       'FieldFailure',
       'EMPTY_ARGS',
       'isObjectLike',
+      'base64EncodeUtf8',
       'fallback',
       'resolvers',
       'argsList',
@@ -1235,6 +1243,7 @@ class GraphExecutionArtifact {
       fieldFailure: typeof FieldFailure,
       emptyArgs: ObjMap<unknown>,
       objectLike: typeof isObjectLike,
+      encodeBase64: typeof base64EncodeUtf8,
       fallback: (frame: GraphFrame, idx: number, value: unknown) => unknown | FieldFailure | GraphUnsupported,
       resolvers: ReadonlyArray<CompiledResolverPlan['resolve'] | undefined>,
       argsList: ReadonlyArray<ObjMap<unknown>>,
@@ -1252,6 +1261,7 @@ class GraphExecutionArtifact {
       FieldFailure,
       EMPTY_ARGS,
       isObjectLike,
+      base64EncodeUtf8,
       (frame, node, value) => this.completeNodeInterpreted(frame, node, value, undefined),
       resolvers,
       this.args,
@@ -1583,7 +1593,7 @@ class GraphExecutionArtifact {
               state,
               parentOut,
               child,
-              btoa(`${relayGlobalId.typename}:${String(rawId ?? '')}`),
+              base64EncodeUtf8(`${relayGlobalId.typename}:${String(rawId ?? '')}`),
               nextLevel,
             );
             if (failure !== undefined) return Effect.fail(failure);
@@ -2003,7 +2013,7 @@ class GraphExecutionArtifact {
         const childCompleted = this.completeNode(
           frame,
           child,
-          btoa(`${relayGlobalId.typename}:${String(rawId ?? '')}`),
+          base64EncodeUtf8(`${relayGlobalId.typename}:${String(rawId ?? '')}`),
           path,
         );
         if (childCompleted instanceof FieldFailure) {
@@ -2129,7 +2139,7 @@ class GraphExecutionArtifact {
     const relayGlobalId = this.relayGlobalIds[idx];
     if (relayGlobalId !== undefined) {
       const rawId = isObjectLike(source) ? source[relayGlobalId.key] : undefined;
-      return btoa(`${relayGlobalId.typename}:${String(rawId ?? '')}`);
+      return base64EncodeUtf8(`${relayGlobalId.typename}:${String(rawId ?? '')}`);
     }
 
     const resolver = this.resolverPlans[idx];
@@ -2186,8 +2196,8 @@ class CompiledField {
     source: unknown,
     parentPath: Path | undefined,
   ): Effect.Effect<unknown | UndefinedField, FieldFailure, R> {
+    const path = addPath(parentPath, this.responseName, parentType.name);
     return Effect.suspend(() => {
-      const path = addPath(parentPath, this.responseName, parentType.name);
       let info: GraphQLResolveInfo | undefined;
       const getInfo = (): GraphQLResolveInfo => info ??= {
           fieldName: this.fieldDef.name,
@@ -2235,7 +2245,24 @@ class CompiledField {
             : this.record(state, failure);
         }),
       );
-    });
+    }).pipe(
+      // A resolver or serialize that throws synchronously does so inside the
+      // suspend callback (or an eager combinator), surfacing as a defect the
+      // inner catchEager never sees. The spec treats any throw during field
+      // execution as a field error, so convert defects here.
+      Effect.catchDefect((defect) => {
+        if (defect instanceof FieldFailure) {
+          return isNonNullType(this.fieldDef.type)
+            ? Effect.fail(defect)
+            : this.record(state, defect);
+        }
+        const error = taggedErrorToGraphQLError(defect, this.fieldNodes, pathToArray(path));
+        const failure = new FieldFailure({ error, path });
+        return isNonNullType(this.fieldDef.type)
+          ? Effect.fail(failure)
+          : this.record(state, failure);
+      }),
+    );
   }
 
   project<R>(
@@ -2313,6 +2340,14 @@ class CompiledField {
     path: Path,
     value: unknown,
   ): Effect.Effect<unknown, unknown, R> {
+    // The Effect-native analog of graphql-js awaiting Promise-valued results:
+    // list items may themselves be Effects (Array<Effect<T>> resolvers).
+    if (Effect.isEffect(value)) {
+      return Effect.flatMap(value as Effect.Effect<unknown, unknown, R>, (resolved) =>
+        this.completeValue(state, returnType, parentType, fieldName, path, resolved),
+      );
+    }
+
     if (value instanceof Error) return Effect.fail(value);
 
     if (isNonNullType(returnType)) {
@@ -2351,7 +2386,11 @@ class CompiledField {
       return Effect.all(
         Array.from(value).map((item, index) => {
           const itemPath = addPath(path, index, undefined);
-          return this.completeValue(state, itemType, parentType, fieldName, itemPath, item).pipe(
+          // Suspend so a sync throw during item completion (e.g. a throwing
+          // serialize) becomes a defect of this item's effect and is located
+          // at the item path rather than escaping to the enclosing field.
+          return Effect.suspend(() => this.completeValue(state, itemType, parentType, fieldName, itemPath, item)).pipe(
+            Effect.catchDefect((defect) => Effect.fail(defect)),
             Effect.catchEager((rawError) => {
               if (rawError instanceof FieldFailure) {
                 return isNonNullType(itemType)
@@ -2928,6 +2967,12 @@ function executeField<R>(
   });
 
   return program.pipe(
+    // Resolvers, serialize, resolveType and isTypeOf are user code invoked
+    // synchronously inside Effect pipelines: a sync throw surfaces as a
+    // defect, not a typed failure. The spec treats any throw during field
+    // execution as a field error, so route defects into the failure channel
+    // (interruption is untouched — catchDefect ignores it).
+    Effect.catchDefect((defect) => Effect.fail(defect)),
     Effect.catch((rawError) => {
       if (rawError instanceof FieldFailure) {
         return Effect.fail(rawError);
@@ -3097,6 +3142,15 @@ function completeValue<R>(
   path: Path,
   result: unknown,
 ): Effect.Effect<unknown, unknown, R> {
+  // The Effect-native analog of graphql-js awaiting Promise-valued results:
+  // resolvers may return collections whose items are themselves Effects
+  // (e.g. a list resolver returning Array<Effect<T>>).
+  if (Effect.isEffect(result)) {
+    return Effect.flatMap(result as Effect.Effect<unknown, unknown, R>, (resolved) =>
+      completeValue<R>(exeContext, returnType, fieldNodes, info, path, resolved),
+    );
+  }
+
   if (result instanceof Error) {
     return Effect.fail(result);
   }
@@ -3229,20 +3283,30 @@ function completeListItem<R>(
   itemPath: Path,
   item: unknown,
 ): Effect.Effect<unknown, FieldFailure, R> {
-  return completeValue<R>(
-    exeContext,
-    itemType,
-    fieldNodes,
-    info,
-    itemPath,
-    item,
+  // Suspend so a sync throw during completion (e.g. a throwing serialize)
+  // becomes a defect of this item's effect and is located at the item path
+  // rather than escaping to the enclosing field.
+  return Effect.suspend(() =>
+    completeValue<R>(
+      exeContext,
+      itemType,
+      fieldNodes,
+      info,
+      itemPath,
+      item,
+    ),
   ).pipe(
+    Effect.catchDefect((defect) => Effect.fail(defect)),
     Effect.catch((rawError) => {
       if (rawError instanceof FieldFailure) {
         return handleFieldFailure<R>(rawError, itemType, exeContext);
       }
       const error = taggedErrorToGraphQLError(rawError, fieldNodes, pathToArray(itemPath));
-      return Effect.fail(new FieldFailure({ error, path: itemPath }));
+      return handleFieldFailure<R>(
+        new FieldFailure({ error, path: itemPath }),
+        itemType,
+        exeContext,
+      );
     }),
   );
 }

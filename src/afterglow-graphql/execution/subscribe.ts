@@ -181,6 +181,10 @@ function executeSubscription<R>(
     }).pipe(Effect.withSpan('afterglow.subscribe.resolve'));
 
     return yield* program.pipe(
+      // A subscribe resolver that throws synchronously surfaces as a defect,
+      // not a typed failure; the spec treats it as a subscription error, so
+      // route defects into the failure channel before locating.
+      Effect.catchDefect((defect) => Effect.fail(defect)),
       Effect.catch((error: unknown) =>
         Effect.fail(locatedError(error, fieldNodes, pathToArray(path))),
       ),

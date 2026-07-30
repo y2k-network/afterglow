@@ -14,6 +14,7 @@ import {
   GraphQLInt,
   GraphQLString,
 } from "../afterglow-graphql/type/scalars.ts";
+import { base64DecodeUtf8, base64EncodeUtf8 } from "../afterglow-graphql/jsutils/base64.ts";
 /**
  * Structural shape needed by the relay primitives below — only `loadOne`
  * is read. We declare it locally so this module stands alone (no IR dep).
@@ -37,7 +38,7 @@ export class InvalidGlobalIdError extends Data.TaggedError(
 }> {}
 
 export function encodeGlobalId(typename: string, rawId: string): string {
-  return btoa(`${typename}:${rawId}`);
+  return base64EncodeUtf8(`${typename}:${rawId}`);
 }
 
 export function decodeGlobalId(globalId: string): {
@@ -46,7 +47,7 @@ export function decodeGlobalId(globalId: string): {
 } {
   let decoded: string;
   try {
-    decoded = atob(globalId);
+    decoded = base64DecodeUtf8(globalId);
   } catch {
     throw new InvalidGlobalIdError({
       globalId,
