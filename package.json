@@ -1,0 +1,72 @@
+{
+  "name": "@y2k-network/afterglow",
+  "version": "0.1.0-alpha.1",
+  "description": "Effect-native, Relay-purpose-built GraphQL schema builder. Layer-driven schemas, zero-config Relay defaults.",
+  "license": "MIT",
+  "author": "Austin Buckler",
+  "homepage": "https://github.com/y2k-network/afterglow",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/y2k-network/afterglow.git"
+  },
+  "bugs": {
+    "url": "https://github.com/y2k-network/afterglow/issues"
+  },
+  "keywords": [
+    "graphql",
+    "relay",
+    "effect",
+    "schema",
+    "schema-builder",
+    "typescript"
+  ],
+  "module": "dist/index.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test",
+    "test:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov",
+    "lint": "bunx tsc --noEmit && bun test src/lint.test.ts",
+    "ci:inference-guard": "bash scripts/inference-guard.sh",
+    "api:check": "bunx api-extractor run --verbose",
+    "api:update": "bunx api-extractor run --local --verbose",
+    "changeset": "bunx changeset",
+    "version": "bunx changeset version",
+    "prepublishOnly": "bun run typecheck && bun run test && bun run build"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.0",
+    "@microsoft/api-extractor": "^7.58.7",
+    "@types/bun": "latest",
+    "@types/node": "^25.6.2",
+    "fast-check": "^4.8.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "effect": "^4.0.0-beta.64"
+  },
+  "packageManager": "pnpm@10.11.0+sha512.6540583f41cc5f628eb3d9773ecee802f4f9ef9923cc45b69890fb47991d4b092964694ec3a4f738a420c918a333062c8b925d312f42e4f0c263eb603551f977"
+}

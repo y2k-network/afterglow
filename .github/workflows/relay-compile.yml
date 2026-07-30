@@ -1,0 +1,32 @@
+name: relay-compile
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  relay-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+            test/relay-client/node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'test/relay-client/bun.lock') }}
+      - run: bun install --frozen-lockfile
+      - name: Install relay-compiler
+        working-directory: test/relay-client
+        run: bun install --frozen-lockfile
+      - name: Relay client compile test
+        run: bun test test/relay-client.test.ts

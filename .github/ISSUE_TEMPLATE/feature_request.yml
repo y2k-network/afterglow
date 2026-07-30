@@ -1,0 +1,35 @@
+name: Feature request
+description: Propose a new capability or an ergonomics improvement.
+title: "[feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The shape of the schema is intentionally not configurable. If you
+        want to opt out of a Relay convention, please describe the
+        user-facing behaviour you need rather than the API change you have
+        in mind — that gives us more room to find the right primitive.
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: What are you trying to do? What schema or client behaviour are you trying to express?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-api
+    attributes:
+      label: Proposed API (optional)
+      description: A sketch is fine — exact bikeshed-able names are not the point yet.
+      render: ts
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you've tried, or other libraries' approaches.
+  - type: textarea
+    id: relay-context
+    attributes:
+      label: Relay client context (if applicable)
+      description: Are you blocked by a relay-compiler error, a runtime warning, or a missing directive?

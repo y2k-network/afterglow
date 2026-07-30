@@ -1,0 +1,57 @@
+import { inspect } from '../../jsutils/inspect.ts';
+
+import { GraphQLValidationError } from '../../error/graph-ql-error.ts';
+
+import type { FieldNode } from '../../language/ast.ts';
+import type { ASTVisitor } from '../../language/visitor.ts';
+
+import { getNamedType, isLeafType } from '../../type/definition.ts';
+
+import type { ValidationContext } from '../validation-context.ts';
+
+/**
+ * Scalar leafs
+ *
+ * A GraphQL document is valid only if all leaf fields (fields without
+ * sub selections) are of scalar or enum types.
+ */
+export function ScalarLeafsRule(context: ValidationContext): ASTVisitor {
+  return {
+    Field(node: FieldNode) {
+      const type = context.getType();
+      const selectionSet = node.selectionSet;
+      if (type) {
+        if (isLeafType(getNamedType(type))) {
+          if (selectionSet) {
+            const fieldName = node.name.value;
+            const typeStr = inspect(type);
+            context.reportError(
+              new GraphQLValidationError(
+                `Field "${fieldName}" must not have a selection since type "${typeStr}" has no subfields.`,
+                { nodes: selectionSet },
+              ),
+            );
+          }
+        } else if (!selectionSet) {
+          const fieldName = node.name.value;
+          const typeStr = inspect(type);
+          context.reportError(
+            new GraphQLValidationError(
+              `Field "${fieldName}" of type "${typeStr}" must have a selection of subfields. Did you mean "${fieldName} { ... }"?`,
+              { nodes: node },
+            ),
+          );
+        } else if (selectionSet.selections.length === 0) {
+          const fieldName = node.name.value;
+          const typeStr = inspect(type);
+          context.reportError(
+            new GraphQLValidationError(
+              `Field "${fieldName}" of type "${typeStr}" must have at least one field selected.`,
+              { nodes: node },
+            ),
+          );
+        }
+      }
+    },
+  };
+}

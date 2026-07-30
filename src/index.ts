@@ -1,0 +1,133 @@
+/**
+ * Public surface for `@y2k-network/afterglow` — the Layer-driven API.
+ *
+ * Two equally valid import styles:
+ *
+ * ```ts
+ * // Namespace style (matches Effect's `Layer.mergeAll`, `Effect.gen` shape):
+ * import { GraphQL } from "@y2k-network/afterglow"
+ *
+ * GraphQL.Node.layer(User)({ load: ..., viewer: ... })
+ * GraphQL.Query.layer({ todos: GraphQL.queryField(...) })
+ * GraphQL.buildSchema(SchemaLayer)
+ *
+ * // Or named imports:
+ * import { Node, Query, queryField, buildSchema } from "@y2k-network/afterglow"
+ * ```
+ */
+import { Schema } from "effect";
+
+export {
+  Connection,
+  ID,
+  Mutation,
+  Node,
+  Query,
+  Scalar,
+  Subscription,
+  Viewer,
+  deletedId,
+  edgePayload,
+  field,
+  globalId,
+  id,
+  mutationField,
+  parseGlobalId,
+  queryField,
+  resolve,
+  subscriptionField,
+  toConnection,
+} from "./builder.ts";
+
+export { buildSchema } from "./schema/build.ts";
+
+// Type re-exports for users who want to spell types explicitly.
+export type {
+  ConnectionPayload,
+  ConnectionType,
+  FieldDef,
+  IDMarker,
+  MutationFieldDef,
+  PaginationArgs,
+  QueryFieldDef,
+  ScalarType,
+  SchemaClass,
+  SubscriptionFieldDef,
+} from "./types.ts";
+
+// Standard scalars + their Effect Schema codecs.
+export {
+  BigIntScalar,
+  DateScalar,
+  DateTimeScalar,
+  EmailAddressScalar,
+  JSONScalar,
+  URLScalar,
+  UUIDScalar,
+  standardScalarTypes,
+  standardSchemas,
+} from "./scalars.ts";
+
+// Relay directive declarations + helpers (callable from custom transports
+// or for printing schemas with the full directive set).
+export {
+  aliasDirective,
+  appendEdgeDirective,
+  appendNodeDirective,
+  assignableDirective,
+  catchDirective,
+  connectionDirective,
+  dangerouslyUnaliasedFixmeDirective,
+  deferDirective,
+  deleteEdgeDirective,
+  deleteRecordDirective,
+  fetchableDirective,
+  inlineDirective,
+  matchDirective,
+  moduleDirective,
+  noInlineDirective,
+  prependEdgeDirective,
+  prependNodeDirective,
+  rawResponseTypeDirective,
+  refetchableDirective,
+  relayDirective,
+  relayDirectives,
+  requiredDirective,
+  semanticNonNullDirective,
+  streamConnectionDirective,
+  streamDirective,
+  throwOnFieldErrorDirective,
+  updatableDirective,
+  waterfallDirective,
+} from "./relay/directives.ts";
+export { matchable } from "./relay/three-d.ts";
+
+// Lower-level escape hatches (custom transports, schema introspection).
+export { lower, type LowerOptions } from "./schema/compile.ts";
+
+// SDL printer that preserves field-level directive applications (e.g.
+// @semanticNonNull) attached on `GraphQLField.astNode.directives`.
+export { printSchemaWithDirectives, type PrintSchemaOptions } from "./schema/print-sdl.ts";
+
+// Build-time schema linter (Relay anti-pattern detection).
+export { lintSchema, type LintIssue } from "./schema/lint.ts";
+
+// Global ID helpers (encode/decode are aliased as globalId/parseGlobalId).
+export { decodeGlobalId, encodeGlobalId, InvalidGlobalIdError } from "./relay/core.ts";
+
+/**
+ * Annotate a Schema.Class as a GraphQL input type. Equivalent to attaching the
+ * `identifier` annotation on the underlying schema — the schema-bridge picks
+ * it up when the class is referenced from a mutation `input` slot.
+ *
+ * The Schema.Class form already carries an identifier (the class name), so
+ * for classes this is a no-op pass-through. The function exists to enable
+ * `Input(name, fields)` for users who want to define an input without
+ * declaring a class.
+ */
+export function Input<S extends Schema.Top>(name: string, schema: S): S {
+  return schema.annotate({ identifier: name }) as S;
+}
+
+// Namespace export — the canonical reference style (`GraphQL.Node.layer(...)`).
+export * as GraphQL from "./graphql-namespace.ts";
