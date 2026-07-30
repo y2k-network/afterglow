@@ -12,6 +12,12 @@ import { Stream } from 'effect';
 import { VoidIfEmpty } from 'effect/Types';
 import { YieldableError } from 'effect/Cause';
 
+// @public
+type AfterglowError = ArgDecodeError | NonSyncDecodableArg | ResolverFailure | SubscribeFailure | OperationParseError | OperationValidationError | PersistedQueryNotFound | WSProtocolError | UnknownNodeType | InvalidGlobalId | GlobalIdTypeMismatch | HttpRequestError;
+
+// @public
+type AfterglowSchemaError = DuplicateViewer | InvalidNodeClass | UnsupportedFieldShape | UnsupportedOutputType | InvalidRootField | InvalidConnectionIdentifier | ReservedConnectionField | InvalidMutationInput | MissingIdentifierAnnotation | UnmappableAst | InputUnionNotSupported | EmptyArraySchema | NonStringLiteral | InvalidSuspendInput | UnsupportedLiteralKind | TypeRegistryConflict | MissingQueryFields | MissingType | InvalidConnectionNode | InvalidInputFragment | InternalInvariant | SchemaLintError;
+
 // Warning: (ae-forgotten-export) The symbol "GraphQLDirective" needs to be exported by the entry point index.d.ts
 //
 // @public (undocumented)
@@ -22,6 +28,16 @@ export const appendEdgeDirective: GraphQLDirective;
 
 // @public (undocumented)
 export const appendNodeDirective: GraphQLDirective;
+
+// Warning: (ae-forgotten-export) The symbol "ArgDecodeError_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class ArgDecodeError extends ArgDecodeError_base<{
+    readonly fieldPath: string;
+    readonly argName: string;
+    readonly cause: unknown;
+}> {
+}
 
 // @public (undocumented)
 export const assignableDirective: GraphQLDirective;
@@ -130,6 +146,14 @@ interface DocumentNode {
     readonly tokenCount?: number | undefined;
 }
 
+// Warning: (ae-forgotten-export) The symbol "DuplicateViewer_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class DuplicateViewer extends DuplicateViewer_base<{}> {
+    // (undocumented)
+    get message(): string;
+}
+
 // @public (undocumented)
 export const edgePayload: <T>(cursor: string, node: T) => {
     cursor: string;
@@ -138,6 +162,16 @@ export const edgePayload: <T>(cursor: string, node: T) => {
 
 // @public (undocumented)
 export const EmailAddressScalar: GraphQLScalarType<string, string>;
+
+// Warning: (ae-forgotten-export) The symbol "EmptyArraySchema_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class EmptyArraySchema extends EmptyArraySchema_base<{
+    readonly position: "output" | "input";
+}> {
+    // (undocumented)
+    get message(): string;
+}
 
 // @public (undocumented)
 export function encodeGlobalId(typename: string, rawId: string): string;
@@ -163,6 +197,47 @@ declare namespace Engine {
         GraphQLError,
         DocumentNode,
         GraphQLSchema
+    }
+}
+
+declare namespace Errors {
+    export {
+        ArgDecodeError,
+        NonSyncDecodableArg,
+        ResolverFailure,
+        SubscribeFailure,
+        OperationParseError,
+        OperationValidationError,
+        PersistedQueryNotFound,
+        WSProtocolError,
+        UnknownNodeType,
+        InvalidGlobalId,
+        GlobalIdTypeMismatch,
+        HttpRequestError,
+        DuplicateViewer,
+        InvalidNodeClass,
+        UnsupportedFieldShape,
+        UnsupportedOutputType,
+        InvalidRootField,
+        InvalidConnectionIdentifier,
+        ReservedConnectionField,
+        InvalidMutationInput,
+        MissingIdentifierAnnotation,
+        UnmappableAst,
+        InputUnionNotSupported,
+        EmptyArraySchema,
+        NonStringLiteral,
+        InvalidSuspendInput,
+        UnsupportedLiteralKind,
+        TypeRegistryConflict,
+        MissingQueryFields,
+        MissingType,
+        InvalidConnectionNode,
+        InvalidInputFragment,
+        InternalInvariant,
+        SchemaLintError,
+        AfterglowSchemaError,
+        AfterglowError
     }
 }
 
@@ -261,6 +336,17 @@ interface FormattedExecutionResult<TData = ObjMap<unknown>, TExtensions = ObjMap
 
 // @public (undocumented)
 export const globalId: (typename: string, id: string) => string;
+
+// Warning: (ae-forgotten-export) The symbol "GlobalIdTypeMismatch_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class GlobalIdTypeMismatch extends GlobalIdTypeMismatch_base<{
+    readonly fieldPath: string;
+    readonly argName: string;
+    readonly expected: string;
+    readonly actual: string;
+}> {
+}
 
 declare namespace GraphQL {
     export {
@@ -408,6 +494,15 @@ class GraphQLSchema {
     toConfig(): GraphQLSchemaNormalizedConfig;
 }
 
+// Warning: (ae-forgotten-export) The symbol "HttpRequestError_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class HttpRequestError extends HttpRequestError_base<{
+    readonly status: number;
+    readonly reason: string;
+}> {
+}
+
 // @public (undocumented)
 export const ID: IDMarker;
 
@@ -431,6 +526,55 @@ export const inlineDirective: GraphQLDirective;
 // @public
 export function Input<S extends Schema.Top>(name: string, schema: S): S;
 
+// Warning: (ae-forgotten-export) The symbol "InputUnionNotSupported_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class InputUnionNotSupported extends InputUnionNotSupported_base<{}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "InternalInvariant_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class InternalInvariant extends InternalInvariant_base<{
+    readonly detail: string;
+}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "InvalidConnectionIdentifier_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class InvalidConnectionIdentifier extends InvalidConnectionIdentifier_base<{
+    readonly identifier: string;
+}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "InvalidConnectionNode_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class InvalidConnectionNode extends InvalidConnectionNode_base<{
+    readonly connectionName: string;
+    readonly nodeTypeName: string;
+    readonly reason: "unregistered" | "not-an-object-type";
+}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "InvalidGlobalId_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class InvalidGlobalId extends InvalidGlobalId_base<{
+    readonly id: string;
+    readonly reason: string;
+}> {
+}
+
 // Warning: (ae-forgotten-export) The symbol "InvalidGlobalIdError_base" needs to be exported by the entry point index.d.ts
 //
 // @public
@@ -438,6 +582,55 @@ export class InvalidGlobalIdError extends InvalidGlobalIdError_base<{
     readonly globalId: string;
     readonly reason: string;
 }> {
+}
+
+// Warning: (ae-forgotten-export) The symbol "InvalidInputFragment_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class InvalidInputFragment extends InvalidInputFragment_base<{
+    readonly inputName: string;
+}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "InvalidMutationInput_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class InvalidMutationInput extends InvalidMutationInput_base<{}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "InvalidNodeClass_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class InvalidNodeClass extends InvalidNodeClass_base<{
+    readonly reason: "not-a-schema" | "missing-identifier";
+}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "InvalidRootField_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class InvalidRootField extends InvalidRootField_base<{
+    readonly operation: "Query" | "Mutation" | "Subscription";
+    readonly fieldName: string;
+}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "InvalidSuspendInput_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class InvalidSuspendInput extends InvalidSuspendInput_base<{
+    readonly astTag: string;
+}> {
+    // (undocumented)
+    get message(): string;
 }
 
 // @public (undocumented)
@@ -480,6 +673,38 @@ export function matchable<T>(ref: T): T;
 
 // @public
 export const matchDirective: GraphQLDirective;
+
+// Warning: (ae-forgotten-export) The symbol "MissingIdentifierAnnotation_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class MissingIdentifierAnnotation extends MissingIdentifierAnnotation_base<{
+    readonly position: "output" | "input";
+    readonly construct: "literal-union" | "struct" | "enums";
+    readonly members?: ReadonlyArray<string>;
+}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "MissingQueryFields_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class MissingQueryFields extends MissingQueryFields_base<{}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "MissingType_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class MissingType extends MissingType_base<{
+    readonly typeName: string;
+    readonly ownerType: string;
+    readonly fieldName: string;
+}> {
+    // (undocumented)
+    get message(): string;
+}
 
 // @public
 export const moduleDirective: GraphQLDirective;
@@ -532,6 +757,43 @@ export const Node: {
 // @public (undocumented)
 export const noInlineDirective: GraphQLDirective;
 
+// Warning: (ae-forgotten-export) The symbol "NonStringLiteral_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class NonStringLiteral extends NonStringLiteral_base<{
+    readonly literalType: string;
+    readonly literalValue: string;
+}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "NonSyncDecodableArg_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class NonSyncDecodableArg extends NonSyncDecodableArg_base<{
+    readonly fieldPath: string;
+    readonly argName: string;
+    readonly reason: string;
+}> {
+}
+
+// Warning: (ae-forgotten-export) The symbol "OperationParseError_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class OperationParseError extends OperationParseError_base<{
+    readonly errors: ReadonlyArray<GraphQLError>;
+}> {
+}
+
+// Warning: (ae-forgotten-export) The symbol "OperationValidationError_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class OperationValidationError extends OperationValidationError_base<{
+    readonly errors: ReadonlyArray<GraphQLError>;
+}> {
+}
+
 // @public (undocumented)
 export interface PaginationArgs {
     // (undocumented)
@@ -558,6 +820,14 @@ export const parseGlobalId: (id: string) => {
 
 // @public
 function parseSync(source: string | Source, options?: ParseOptions | undefined): DocumentNode;
+
+// Warning: (ae-forgotten-export) The symbol "PersistedQueryNotFound_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class PersistedQueryNotFound extends PersistedQueryNotFound_base<{
+    readonly hash: string;
+}> {
+}
 
 // @public (undocumented)
 export const prependEdgeDirective: GraphQLDirective;
@@ -622,10 +892,30 @@ export function relayDirectives(): ReadonlyArray<GraphQLDirective>;
 // @public (undocumented)
 export const requiredDirective: GraphQLDirective;
 
+// Warning: (ae-forgotten-export) The symbol "ReservedConnectionField_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class ReservedConnectionField extends ReservedConnectionField_base<{
+    readonly connectionName: string;
+    readonly fieldName: string;
+}> {
+    // (undocumented)
+    get message(): string;
+}
+
 // Warning: (ae-forgotten-export) The symbol "WithResolver" needs to be exported by the entry point index.d.ts
 //
 // @public
 export function resolve<TParent, S extends Schema.Top>(fn: (parent: TParent) => S["Type"] | Effect.Effect<S["Type"], unknown, any>): (self: S) => WithResolver<TParent, S>;
+
+// Warning: (ae-forgotten-export) The symbol "ResolverFailure_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class ResolverFailure extends ResolverFailure_base<{
+    readonly fieldPath: string;
+    readonly cause: unknown;
+}> {
+}
 
 // @public (undocumented)
 export function Scalar<T>(name: string, schema: Schema.Codec<T, string | number | boolean, never, never>, description?: string): ScalarType<T>;
@@ -642,6 +932,17 @@ export interface ScalarType<T> {
 
 // @public (undocumented)
 export type SchemaClass<T> = abstract new (...args: any[]) => T;
+
+// Warning: (ae-forgotten-export) The symbol "SchemaLintError_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class SchemaLintError extends SchemaLintError_base<{
+    readonly issues: ReadonlyArray<LintIssue>;
+    readonly formatted: string;
+}> {
+    // (undocumented)
+    get message(): string;
+}
 
 // @public
 export const semanticNonNullDirective: GraphQLDirective;
@@ -671,6 +972,16 @@ export const streamDirective: GraphQLDirective;
 
 // @public
 function subscribe<R = never>(args: ExecutionArgs): Effect.Effect<Stream.Stream<ExecutionResult, unknown, R> | ExecutionResult, never, R>;
+
+// Warning: (ae-forgotten-export) The symbol "SubscribeFailure_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class SubscribeFailure extends SubscribeFailure_base<{
+    readonly fieldPath: string;
+    readonly phase: "subscribe" | "stream";
+    readonly cause: unknown;
+}> {
+}
 
 // @public (undocumented)
 export const Subscription: {
@@ -703,6 +1014,65 @@ export function toConnection<T>(rows: ReadonlyArray<T>, options: {
     hasPreviousPage?: boolean;
     totalCount?: number;
 }): ConnectionPayload<T>;
+
+// Warning: (ae-forgotten-export) The symbol "TypeRegistryConflict_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class TypeRegistryConflict extends TypeRegistryConflict_base<{
+    readonly typeName: string;
+    readonly wantedKind: "enum" | "input object";
+}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "UnknownNodeType_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class UnknownNodeType extends UnknownNodeType_base<{
+    readonly typename: string;
+}> {
+}
+
+// Warning: (ae-forgotten-export) The symbol "UnmappableAst_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class UnmappableAst extends UnmappableAst_base<{
+    readonly position: "output" | "input";
+    readonly astTag: string;
+}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "UnsupportedFieldShape_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class UnsupportedFieldShape extends UnsupportedFieldShape_base<{
+    readonly parentType: string;
+    readonly fieldName: string;
+}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "UnsupportedLiteralKind_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class UnsupportedLiteralKind extends UnsupportedLiteralKind_base<{
+    readonly kind: string;
+}> {
+    // (undocumented)
+    get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "UnsupportedOutputType_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class UnsupportedOutputType extends UnsupportedOutputType_base<{}> {
+    // (undocumented)
+    get message(): string;
+}
 
 // @public (undocumented)
 export const updatableDirective: GraphQLDirective;
@@ -739,12 +1109,21 @@ export const Viewer: {
 // @public (undocumented)
 export const waterfallDirective: GraphQLDirective;
 
+// Warning: (ae-forgotten-export) The symbol "WSProtocolError_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class WSProtocolError extends WSProtocolError_base<{
+    readonly code: number;
+    readonly reason: string;
+}> {
+}
+
 // Warnings were encountered during analysis:
 //
 // src/builder.ts:823:9 - (ae-forgotten-export) The symbol "FieldHelper" needs to be exported by the entry point index.d.ts
 // src/builder.ts:823:9 - (ae-forgotten-export) The symbol "NodeFieldOutput" needs to be exported by the entry point index.d.ts
-// src/builder.ts:1109:5 - (ae-forgotten-export) The symbol "connectionLayer" needs to be exported by the entry point index.d.ts
-// src/builder.ts:1264:5 - (ae-forgotten-export) The symbol "GraphQLResolveInfo" needs to be exported by the entry point index.d.ts
+// src/builder.ts:1103:5 - (ae-forgotten-export) The symbol "connectionLayer" needs to be exported by the entry point index.d.ts
+// src/builder.ts:1258:5 - (ae-forgotten-export) The symbol "GraphQLResolveInfo" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

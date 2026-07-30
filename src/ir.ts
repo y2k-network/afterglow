@@ -13,6 +13,7 @@
  */
 import type { Context, Effect, Schema, Stream } from "effect";
 import type { GraphQLResolveInfo } from "./afterglow-graphql/type/definition.ts";
+import { DuplicateViewer } from "./errors.ts";
 
 // ---------------------------------------------------------------------------
 // Output type references — the lower-time descriptor of a field's return type.
@@ -272,9 +273,7 @@ export const addFragment = (ir: IR, fragment: IRFragment): void => {
       break;
     case "viewer":
       if (ir.viewer !== null) {
-        throw new Error(
-          "@y2k-network/afterglow: GraphQL.Viewer.layer was registered twice. Only one viewer is allowed per schema.",
-        );
+        throw new DuplicateViewer();
       }
       ir.viewer = fragment;
       break;

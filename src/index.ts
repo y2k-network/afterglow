@@ -132,6 +132,11 @@ export function Input<S extends Schema.Top>(name: string, schema: S): S {
 // Namespace export — the canonical reference style (`GraphQL.Node.layer(...)`).
 export * as GraphQL from "./graphql-namespace.ts";
 
+// Tagged error vocabulary — runtime pipeline errors (match via
+// `Effect.catchTag`) and declaration/build-time errors (discriminate on
+// `_tag`, read structured fields). See `AfterglowError` / `AfterglowSchemaError`.
+export * as Errors from "./errors.ts";
+
 // Engine surface — parse/validate/execute for transports driving a built
 // schema. Lives on the root entry so builder and executor always share one
 // module graph (see src/engine.ts).

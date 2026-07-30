@@ -17,6 +17,16 @@ import {
 } from "../afterglow-graphql/type/scalars.ts";
 import { Kind } from "../afterglow-graphql/language/kinds.ts";
 import type { ValueNode } from "../afterglow-graphql/language/ast.ts";
+import {
+  EmptyArraySchema,
+  InputUnionNotSupported,
+  InvalidSuspendInput,
+  MissingIdentifierAnnotation,
+  NonStringLiteral,
+  TypeRegistryConflict,
+  UnmappableAst,
+  UnsupportedLiteralKind,
+} from "../errors.ts";
 
 /**
  * Maps an Effect Schema to a GraphQL input type.
@@ -112,9 +122,7 @@ function literalValueOf(node: ValueNode): unknown {
       return out;
     }
     default:
-      throw new Error(
-        `@y2k-network/afterglow: cannot extract literal from value node of kind "${node.kind}"`,
-      );
+      throw new UnsupportedLiteralKind({ kind: node.kind });
   }
 }
 
@@ -152,9 +160,7 @@ function astToInputType(
       return enumToInputType(ast, registry);
 
     default:
-      throw new Error(
-        `@y2k-network/afterglow: schema-bridge does not support AST node "${ast._tag}" in input position`,
-      );
+      throw new UnmappableAst({ position: "input", astTag: ast._tag });
   }
 }
 
@@ -164,9 +170,7 @@ function literalToInputType(
 ): GraphQLInputType {
   const v = ast.literal;
   if (typeof v !== "string") {
-    throw new Error(
-      `@y2k-network/afterglow: only string Schema.Literal values map to GraphQL (got ${typeof v}: ${String(v)})`,
-    );
+    throw new NonStringLiteral({ literalType: typeof v, literalValue: String(v) });
   }
   // A bare 1-value literal becomes a single-value enum. Naming is awkward
   // without an identifier, so we require one (via .annotate) on isolated
@@ -175,9 +179,7 @@ function literalToInputType(
   const cached = registry.get(id);
   if (cached) {
     if (!(cached instanceof GraphQLEnumType)) {
-      throw new Error(
-        `@y2k-network/afterglow: type registry name collision for "${id}" (existing type is not an enum)`,
-      );
+      throw new TypeRegistryConflict({ typeName: id, wantedKind: "enum" });
     }
     return cached;
   }
@@ -213,9 +215,7 @@ function unionToInputType(
   }
 
   // Anything else is a true input union — banned by GraphQL.
-  throw new Error(
-    "@y2k-network/afterglow: GraphQL has no input union type. Use a discriminated struct, a string-literal union, or split this into separate fields.",
-  );
+  throw new InputUnionNotSupported();
 }
 
 function literalUnionToEnum(
@@ -225,18 +225,16 @@ function literalUnionToEnum(
 ): GraphQLEnumType {
   const id = identifierOf(ast);
   if (!id) {
-    throw new Error(
-      `@y2k-network/afterglow: string-literal union must carry an identifier annotation (use schema.annotate({ identifier: "MyEnum" })) so it has a stable GraphQL name. Members: ${members
-        .map((m) => JSON.stringify(m.literal))
-        .join(", ")}`,
-    );
+    throw new MissingIdentifierAnnotation({
+      position: "input",
+      construct: "literal-union",
+      members: members.map((m) => String(m.literal)),
+    });
   }
   const cached = registry.get(id);
   if (cached) {
     if (!(cached instanceof GraphQLEnumType)) {
-      throw new Error(
-        `@y2k-network/afterglow: type registry name collision for "${id}" (existing type is not an enum)`,
-      );
+      throw new TypeRegistryConflict({ typeName: id, wantedKind: "enum" });
     }
     return cached;
   }
@@ -256,16 +254,12 @@ function objectsToInputType(
 ): GraphQLInputObjectType {
   const id = identifierOf(ast);
   if (!id) {
-    throw new Error(
-      "@y2k-network/afterglow: input struct schemas must carry an identifier annotation (use schema.annotate({ identifier: \"MyInput\" }) or pass the schema to builder.input(name, schema)).",
-    );
+    throw new MissingIdentifierAnnotation({ position: "input", construct: "struct" });
   }
   const cached = registry.get(id);
   if (cached) {
     if (!(cached instanceof GraphQLInputObjectType)) {
-      throw new Error(
-        `@y2k-network/afterglow: type registry name collision for "${id}" (existing type is not an input object)`,
-      );
+      throw new TypeRegistryConflict({ typeName: id, wantedKind: "input object" });
     }
     return cached;
   }
@@ -306,9 +300,7 @@ function suspendToInputType(
     const existing = registry.get(id);
     if (existing) {
       if (!(existing instanceof GraphQLInputObjectType)) {
-        throw new Error(
-          `@y2k-network/afterglow: type registry name collision for "${id}" (existing type is not an input object)`,
-        );
+        throw new TypeRegistryConflict({ typeName: id, wantedKind: "input object" });
       }
       return existing;
     }
@@ -317,9 +309,7 @@ function suspendToInputType(
       fields: () => {
         const inner = ast.thunk();
         if (inner._tag !== "Objects") {
-          throw new Error(
-            `@y2k-network/afterglow: Schema.suspend used as an input type must resolve to a Schema.Struct (got "${inner._tag}")`,
-          );
+          throw new InvalidSuspendInput({ astTag: inner._tag });
         }
         const fields: Record<string, GraphQLInputFieldConfig> = {};
         for (const ps of inner.propertySignatures) {
@@ -349,7 +339,7 @@ function arraysToInputType(
   const inner =
     ast.rest.length > 0 ? ast.rest[0]! : ast.elements.length > 0 ? ast.elements[0]! : undefined;
   if (!inner) {
-    throw new Error("@y2k-network/afterglow: empty array schema cannot be mapped to a GraphQL list type");
+    throw new EmptyArraySchema({ position: "input" });
   }
   return new GraphQLList(astToInputType(inner, registry));
 }
@@ -360,16 +350,12 @@ function enumToInputType(
 ): GraphQLEnumType {
   const id = identifierOf(ast);
   if (!id) {
-    throw new Error(
-      "@y2k-network/afterglow: Schema.Enums(...) must carry an identifier annotation to map to a GraphQL enum",
-    );
+    throw new MissingIdentifierAnnotation({ position: "input", construct: "enums" });
   }
   const cached = registry.get(id);
   if (cached) {
     if (!(cached instanceof GraphQLEnumType)) {
-      throw new Error(
-        `@y2k-network/afterglow: type registry name collision for "${id}" (existing type is not an enum)`,
-      );
+      throw new TypeRegistryConflict({ typeName: id, wantedKind: "enum" });
     }
     return cached;
   }

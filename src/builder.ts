@@ -26,6 +26,18 @@ import {
 } from "effect";
 import { decodeGlobalId, encodeGlobalId } from "./relay/core.ts";
 import { hasIntCheck } from "./schema/bridge.ts";
+import {
+  EmptyArraySchema,
+  InvalidConnectionIdentifier,
+  InvalidMutationInput,
+  InvalidNodeClass,
+  InvalidRootField,
+  MissingIdentifierAnnotation,
+  ReservedConnectionField,
+  UnmappableAst,
+  UnsupportedFieldShape,
+  UnsupportedOutputType,
+} from "./errors.ts";
 import type { GraphQLResolveInfo } from "./afterglow-graphql/type/definition.ts";
 import {
   connectionEdge as connectionEdgeFn,
@@ -349,9 +361,7 @@ const outputTypeToIR = (t: FieldOutputType | ConnectionType<unknown>): IROutputT
       return { kind: "named", name };
     }
     if (!("ast" in (t as object))) {
-      throw new Error(
-        "@y2k-network/afterglow: cannot derive a GraphQL type name from this constructor — expected a Schema.Class.",
-      );
+      throw new InvalidNodeClass({ reason: "not-a-schema" });
     }
   }
   if (isSchemaLike(t)) {
@@ -385,7 +395,7 @@ const outputTypeToIR = (t: FieldOutputType | ConnectionType<unknown>): IROutputT
     }
     return astToOutputIR(ast);
   }
-  throw new Error("@y2k-network/afterglow: unsupported field output type");
+  throw new UnsupportedOutputType();
 };
 
 type OutputAst = {
@@ -426,11 +436,11 @@ const astToOutputIR = (ast: OutputAst): IROutputType => {
       ) {
         const id = ast.annotations?.identifier;
         if (typeof id !== "string") {
-          throw new Error(
-            `@y2k-network/afterglow: string-literal union must carry an identifier annotation (use schema.annotate({ identifier: "MyEnum" })) so it has a stable GraphQL name. Members: ${nonNull
-              .map((m) => JSON.stringify(m.literal))
-              .join(", ")}`,
-          );
+          throw new MissingIdentifierAnnotation({
+            position: "output",
+            construct: "literal-union",
+            members: nonNull.map((m) => String(m.literal)),
+          });
         }
         const enumFrag: IREnumFragment = {
           kind: "enum",
@@ -450,9 +460,7 @@ const astToOutputIR = (ast: OutputAst): IROutputType => {
       // must be registered elsewhere.
       const element = (ast.rest && ast.rest[0]) ?? (ast.elements && ast.elements[0]);
       if (!element) {
-        throw new Error(
-          "@y2k-network/afterglow: empty array schema cannot be mapped to a GraphQL list type",
-        );
+        throw new EmptyArraySchema({ position: "output" });
       }
       const itemNullable =
         element._tag === "Union" && (element.types ?? []).some((m) => m._tag === "Null");
@@ -471,9 +479,7 @@ const astToOutputIR = (ast: OutputAst): IROutputType => {
     // (DateTime, JSON, URL, etc. — see standard-scalars.ts).
     return { kind: "scalar", name: id };
   }
-  throw new Error(
-    `@y2k-network/afterglow: cannot map Schema AST "${ast._tag}" to a GraphQL output type without an \`identifier\` annotation.`,
-  );
+  throw new UnmappableAst({ position: "output", astTag: ast._tag });
 };
 
 /**
@@ -532,17 +538,13 @@ const classToInputSchema = (cls: unknown): Schema.Top => {
   }
   // Fallback — already a Schema.Top of some shape (e.g. a plain Struct).
   if ((cls as { ast?: unknown }).ast !== undefined) return cls as Schema.Top;
-  throw new Error(
-    "@y2k-network/afterglow: mutationField input must be a Schema.Class or a named Schema.Struct.",
-  );
+  throw new InvalidMutationInput();
 };
 
 const classIdentifier = (cls: SchemaClass<unknown>): string => {
   const name = (cls as { identifier?: unknown }).identifier;
   if (typeof name !== "string") {
-    throw new Error(
-      "@y2k-network/afterglow: GraphQL.Node.layer / Connection.layer require a Schema.Class — the class identifier was not a string.",
-    );
+    throw new InvalidNodeClass({ reason: "missing-identifier" });
   }
   return name;
 };
@@ -640,9 +642,7 @@ const compileFieldEntry = (
       resolve: defaultPassthroughResolve(fieldName),
     };
   }
-  throw new Error(
-    `@y2k-network/afterglow: field "${parentName}.${fieldName}" — value is not a recognized field shape (expected Schema.Top, GraphQL.field(...), Schema.Class, ScalarType, or GraphQL.ID).`,
-  );
+  throw new UnsupportedFieldShape({ parentType: parentName, fieldName });
 };
 
 const defaultPassthroughResolve = (
@@ -993,9 +993,7 @@ const makeConnectionFragment = (
   declaredName?: string,
 ): IRConnectionFragment => {
   if (declaredName !== undefined && !declaredName.endsWith("Connection")) {
-    throw new Error(
-      `@y2k-network/afterglow: connection type "${declaredName}" must end in "Connection" — Relay identifies connections by that suffix.`,
-    );
+    throw new InvalidConnectionIdentifier({ identifier: declaredName });
   }
   const connectionName = declaredName ?? `${nodeName}Connection`;
   let extraFields: Record<string, IRFieldDef> | undefined;
@@ -1003,9 +1001,7 @@ const makeConnectionFragment = (
     extraFields = {};
     for (const [fname, fdef] of Object.entries(extend(field as unknown as FieldHelper<never>))) {
       if (fname === "edges" || fname === "pageInfo") {
-        throw new Error(
-          `@y2k-network/afterglow: "${fname}" is part of the canonical Relay connection shape and cannot be overridden on ${connectionName}. Pick a different field name.`,
-        );
+        throw new ReservedConnectionField({ connectionName, fieldName: fname });
       }
       extraFields[fname] = compileFieldEntry(fname, connectionName, fdef);
     }
@@ -1068,9 +1064,7 @@ function ConnectionFn<T>(
 ): ConnectionClass<T> {
   const nodeName = classIdentifier(cls);
   if (identifier !== undefined && !identifier.endsWith("Connection")) {
-    throw new Error(
-      `@y2k-network/afterglow: connection type "${identifier}" must end in "Connection" — Relay identifies connections by that suffix.`,
-    );
+    throw new InvalidConnectionIdentifier({ identifier });
   }
   class ConnectionBase {
     constructor(payload: ConnectionPayload<T>) {
@@ -1403,9 +1397,7 @@ export const Query = {
         for (const [name, def] of Object.entries(fields)) {
           const raw = readRoot(def, RAW_QF_KEY);
           if (!raw) {
-            throw new Error(
-              `@y2k-network/afterglow: GraphQL.Query.layer field "${name}" must be created via GraphQL.queryField(...)`,
-            );
+            throw new InvalidRootField({ operation: "Query", fieldName: name });
           }
           out[name] = compileRootField(name, raw);
         }
@@ -1426,9 +1418,7 @@ export const Mutation = {
         for (const [name, def] of Object.entries(fields)) {
           const raw = readRoot(def, RAW_MF_KEY);
           if (!raw) {
-            throw new Error(
-              `@y2k-network/afterglow: GraphQL.Mutation.layer field "${name}" must be created via GraphQL.mutationField(...)`,
-            );
+            throw new InvalidRootField({ operation: "Mutation", fieldName: name });
           }
           out[name] = compileRootField(name, raw);
         }
@@ -1449,9 +1439,7 @@ export const Subscription = {
         for (const [name, def] of Object.entries(fields)) {
           const raw = readSub(def);
           if (!raw) {
-            throw new Error(
-              `@y2k-network/afterglow: GraphQL.Subscription.layer field "${name}" must be created via GraphQL.subscriptionField(...)`,
-            );
+            throw new InvalidRootField({ operation: "Subscription", fieldName: name });
           }
           out[name] = compileSubField(raw);
         }

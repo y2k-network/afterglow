@@ -602,6 +602,19 @@ test("smoke: missing-fragment error message names the type and the fix", () => {
   void ItemNode;
   const SchemaLayer = Layer.mergeAll(BadNode);
   expect(() => buildSchema(SchemaLayer)).toThrow(/Add the layer that defines Ghost/);
+
+  // Build failures are tagged errors with structured fields, not bare
+  // Error — tooling can discriminate on _tag and read the data.
+  try {
+    buildSchema(SchemaLayer);
+    throw new Error("expected buildSchema to throw");
+  } catch (err) {
+    const tagged = err as { _tag?: string; typeName?: string; ownerType?: string; fieldName?: string };
+    expect(tagged._tag).toBe("MissingType");
+    expect(tagged.typeName).toBe("Ghost");
+    expect(tagged.ownerType).toBe("Item");
+    expect(tagged.fieldName).toBe("ghost");
+  }
 });
 
 test("smoke: full integration — viewer + connection + mutation with per-request CurrentUser", async () => {

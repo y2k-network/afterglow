@@ -53,8 +53,8 @@ export function lintSchema(ir: IR): ReadonlyArray<LintIssue> {
 }
 
 /**
- * Format a list of issues for `throw new Error(...)`. Used by the lower
- * pipeline when one or more `error` issues were produced.
+ * Format a list of issues into the `SchemaLintError` message. Used by the
+ * lower pipeline when one or more `error` issues were produced.
  */
 export function formatLintErrors(issues: ReadonlyArray<LintIssue>): string {
   if (issues.length === 0) return "@y2k-network/afterglow: schema build failed (no issues)";

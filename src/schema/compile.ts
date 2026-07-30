@@ -13,6 +13,15 @@
  */
 import { Context, Effect } from "effect";
 import {
+  InternalInvariant,
+  InvalidConnectionNode,
+  InvalidInputFragment,
+  MissingQueryFields,
+  MissingType,
+  SchemaLintError,
+  TypeRegistryConflict,
+} from "../errors.ts";
+import {
   GraphQLEnumType,
   GraphQLInputObjectType,
   GraphQLList,
@@ -94,9 +103,7 @@ export function lower(ir: IR, options: LowerOptions = {}): GraphQLSchema {
   const hasViewer = ir.viewer !== null;
   const hasQueryFields = Object.keys(ir.queryFields).length > 0;
   if (!hasNodes && !hasQueryFields && !hasViewer) {
-    throw new Error(
-      "@y2k-network/afterglow: at least one query field is required (call GraphQL.Query.layer({ ... }) or register GraphQL.Viewer.layer({ ... }))",
-    );
+    throw new MissingQueryFields();
   }
 
   // Run the build-time schema linter against the collected IR before any
@@ -105,7 +112,10 @@ export function lower(ir: IR, options: LowerOptions = {}): GraphQLSchema {
   const lintIssues = lintSchema(ir);
   const lintErrors = lintIssues.filter((i) => i.severity === "error");
   if (lintErrors.length > 0) {
-    throw new Error(formatLintErrors(lintErrors));
+    throw new SchemaLintError({
+      issues: lintErrors,
+      formatted: formatLintErrors(lintErrors),
+    });
   }
   emitLintWarnings(lintIssues, options.muteLintWarnings ?? []);
 
@@ -130,9 +140,7 @@ export function lower(ir: IR, options: LowerOptions = {}): GraphQLSchema {
     const cached = registry.get(name);
     if (cached) {
       if (!(cached instanceof GraphQLEnumType)) {
-        throw new Error(
-          `@y2k-network/afterglow: type registry name collision for "${name}" (existing type is not an enum)`,
-        );
+        throw new TypeRegistryConflict({ typeName: name, wantedKind: "enum" });
       }
       continue;
     }
@@ -196,19 +204,23 @@ export function lower(ir: IR, options: LowerOptions = {}): GraphQLSchema {
   for (const [, conn] of ir.connections) {
     const nodeType = registry.get(conn.nodeTypeName);
     if (!nodeType) {
-      throw new Error(
-        `@y2k-network/afterglow: connection "${conn.name}" references unknown node type "${conn.nodeTypeName}"`,
-      );
+      throw new InvalidConnectionNode({
+        connectionName: conn.name,
+        nodeTypeName: conn.nodeTypeName,
+        reason: "unregistered",
+      });
     }
     if (!(nodeType instanceof GraphQLObjectType)) {
-      throw new Error(
-        `@y2k-network/afterglow: connection "${conn.name}" expected node type "${conn.nodeTypeName}" to be a GraphQLObjectType`,
-      );
+      throw new InvalidConnectionNode({
+        connectionName: conn.name,
+        nodeTypeName: conn.nodeTypeName,
+        reason: "not-an-object-type",
+      });
     }
     if (!pageInfoType) {
-      throw new Error(
-        "@y2k-network/afterglow: internal — PageInfo not initialized despite connection types being present",
-      );
+      throw new InternalInvariant({
+        detail: "PageInfo not initialized despite connection types being present",
+      });
     }
     const extraFields = conn.extraFields;
     // Connection types over the same node (canonical + extended subclasses)
@@ -232,9 +244,7 @@ export function lower(ir: IR, options: LowerOptions = {}): GraphQLSchema {
   for (const [, input] of ir.inputs) {
     const inputType = schemaToInputType(input.schema, registry);
     if (!(inputType instanceof GraphQLInputObjectType)) {
-      throw new Error(
-        `@y2k-network/afterglow: input "${input.name}" did not resolve to a GraphQLInputObjectType`,
-      );
+      throw new InvalidInputFragment({ inputName: input.name });
     }
   }
 
@@ -486,39 +496,6 @@ function makeFieldDefinitionNode(
  * forget to merge `Connection.layer(Todo)` and previously got a vague
  * "type TodoConnection is not registered" with no hint about the fix.
  */
-function missingTypeError(
-  typeName: string,
-  ownerName: string,
-  fieldName: string,
-): string {
-  const fieldRef = ownerName === "<root>" ? `field "${fieldName}"` : `field "${ownerName}.${fieldName}"`;
-
-  // Connection types: derive the underlying node from the name and tell the
-  // user exactly what to add.
-  if (typeName.endsWith("Connection")) {
-    const nodeName = typeName.slice(0, -"Connection".length);
-    return (
-      `@y2k-network/afterglow: ${fieldRef} returns type "${typeName}" but no connection type for ${nodeName} is registered. ` +
-      `Use \`GraphQL.Connection(${nodeName})\` as the field type — \`queryField(GraphQL.Connection(${nodeName}), { resolve: ... })\` — ` +
-      `or add \`GraphQL.Connection.layer(${nodeName})\` to your SchemaLayer's \`Layer.mergeAll(...)\`.`
-    );
-  }
-  if (typeName.endsWith("Edge")) {
-    const nodeName = typeName.slice(0, -"Edge".length);
-    return (
-      `@y2k-network/afterglow: ${fieldRef} returns edge type "${typeName}" but no connection for ${nodeName} is registered. ` +
-      `Add \`GraphQL.Connection.layer(${nodeName})\` to your SchemaLayer.`
-    );
-  }
-
-  // Generic missing-type fallback. Most likely the user forgot to add the
-  // node/object's `*.layer` to their merge.
-  return (
-    `@y2k-network/afterglow: ${fieldRef} references type "${typeName}" but it's not registered. ` +
-    `Add the layer that defines ${typeName} (\`GraphQL.Node.layer(${typeName})({...})\` or similar) ` +
-    `to your SchemaLayer's \`Layer.mergeAll(...)\`.`
-  );
-}
 
 function resolveOutputType(
   ref: IROutputType,
@@ -532,14 +509,14 @@ function resolveOutputType(
       if (builtin) return builtin;
       const named = registry.get(ref.name);
       if (!named) {
-        throw new Error(missingTypeError(ref.name, ownerName, fieldName));
+        throw new MissingType({ typeName: ref.name, ownerType: ownerName, fieldName });
       }
       return named as GraphQLOutputType;
     }
     case "named": {
       const named = registry.get(ref.name);
       if (!named) {
-        throw new Error(missingTypeError(ref.name, ownerName, fieldName));
+        throw new MissingType({ typeName: ref.name, ownerType: ownerName, fieldName });
       }
       return named as GraphQLOutputType;
     }
