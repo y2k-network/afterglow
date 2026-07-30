@@ -151,6 +151,16 @@ export interface FieldOptions<TParent, TResult, TArgs, R> {
   ) => TResult | Effect.Effect<TResult, unknown, R>;
 }
 
+/**
+ * A resolver's success type given the field's wire nullability. Fields are
+ * wire-nullable unless `nonNull: true`, so unless the caller wrote that
+ * literal, the resolver may return `null` for the missing-entity case and
+ * the executor writes wire null — no cast required.
+ */
+export type WireResult<T, NonNull extends boolean | undefined> = [NonNull] extends [true]
+  ? T
+  : T | null;
+
 // ---------------------------------------------------------------------------
 // Query / mutation / subscription field defs
 // ---------------------------------------------------------------------------

@@ -36,6 +36,25 @@ export function schemaToInputType(
 }
 
 /**
+ * Whether an arg schema demands a value: not `Schema.optional(...)` /
+ * `Schema.optionalKey(...)` (AST context carries `isOptional`) and not a
+ * `NullOr` / `UndefinedOr` union. Required args lower to `GraphQLNonNull`
+ * so the SDL matches what the resolver types already assume — `ArgsShape`
+ * types a bare schema's arg as `S["Type"]` with no undefined.
+ */
+export function isRequiredInputSchema(schema: Schema.Top): boolean {
+  const ast = schema.ast;
+  if (ast.context?.isOptional === true) return false;
+  if (
+    ast._tag === "Union" &&
+    (ast as SchemaAST.Union).types.some((m) => m._tag === "Null" || m._tag === "Undefined")
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Bridges a `Schema.Codec<T, string | number | boolean>` to a custom GraphQL
  * scalar. The codec's encoded form (string/number/boolean) is the wire value.
  */
@@ -158,9 +177,11 @@ function unionToInputType(
   ast: SchemaAST.Union,
   registry: Map<string, GraphQLNamedType>,
 ): GraphQLInputType {
-  const nonNullMembers = ast.types.filter((m) => m._tag !== "Null");
-  // NullOr(T) → Union [T, Null] — unwrap to T (input nullability is the
+  // Null and Undefined members carry no wire shape — NullOr(T) means a null
+  // literal may arrive, optional/UndefinedOr(T) means the value may be
+  // absent. Either way the GraphQL input type is bare T (nullability is the
   // caller's concern; see DESIGN.md §6).
+  const nonNullMembers = ast.types.filter((m) => m._tag !== "Null" && m._tag !== "Undefined");
   if (nonNullMembers.length === 1 && nonNullMembers.length < ast.types.length) {
     return astToInputType(nonNullMembers[0]!, registry);
   }

@@ -37,11 +37,13 @@ EXPECTED=(
   "Property 'first' does not exist on type '{}'"
   "Property 'NAME_TYPO_SHOULD_ERROR' does not exist on type 'HarnessUser'"
   "Property 'EMAIL_TYPO' does not exist on type 'HarnessUser'"
+  "Type 'TodoT | null' is not assignable to type 'TodoT'"
 )
 LABELS=(
   "footgun guard (#1: queryField args: {} on plain-T)"
   "typo guard (#2: f(...) callback parent inference)"
   "pipe guard (#3: Schema.String.pipe(resolve(...)) — indexed-signature NodeFields<T> regression target)"
+  "nullability guard (#4: nonNull: true rejects null-returning resolvers — WireResult<T, NN>)"
 )
 
 cleanup() {

@@ -425,7 +425,7 @@ test("smoke: mutation with input + deletedId helper", async () => {
   const sdl = printSchema(schema);
   expect(sdl).toContain("type Mutation");
   expect(sdl).toContain("input CreateTodoInput");
-  expect(sdl).toContain("createTodo(input: CreateTodoInput): TodoT");
+  expect(sdl).toContain("createTodo(input: CreateTodoInput!): TodoT");
 
   const result = await execute({
     schema,
@@ -769,6 +769,102 @@ test("smoke: subscriptionField streams with Effect services and resolver info", 
   ]);
 
   await runtime.dispose();
+});
+
+test("smoke: nullable resolvers return null bare — no cast; nonNull: true still rejects null", async () => {
+  const TodoNode = Node.layer(TodoT)({
+    fields: (f) => ({
+      title: Schema.String,
+      // field() helper on a wire-nullable field: resolver returns null directly.
+      assignee: f(Schema.String, {
+        resolve: () => Effect.succeed(null),
+      }),
+    }),
+    load: (id) =>
+      Effect.gen(function* () {
+        const store = yield* TodoStoreT;
+        return yield* store.findById(id);
+      }),
+  });
+
+  const QueryLayer = Query.layer({
+    // The missing-entity case: findById is Effect<TodoT | null>, the field is
+    // wire-nullable (no nonNull), so the Effect passes through uncast.
+    maybeTodo: queryField(TodoT, {
+      args: { todoId: Schema.String },
+      resolve: (_root, args) =>
+        Effect.gen(function* () {
+          const store = yield* TodoStoreT;
+          return yield* store.findById(args.todoId ?? "");
+        }),
+    }),
+    // @ts-expect-error — TS2769: 'TodoT | null' is not assignable to type 'TodoT' — nonNull: true fields must not resolve null
+    requiredTodo: queryField(TodoT, {
+      nonNull: true,
+      resolve: () =>
+        Effect.gen(function* () {
+          const store = yield* TodoStoreT;
+          return yield* store.findById("1");
+        }),
+    }),
+  });
+
+  const SchemaLayer = Layer.mergeAll(TodoNode, QueryLayer);
+  const runtime = ManagedRuntime.make(TodoStoreLive);
+  const schema = buildSchema(SchemaLayer);
+  const contextValue = await runtime.context();
+
+  const result = await execute({
+    schema,
+    document: parse(`{ maybeTodo(todoId: "does-not-exist") { title } }`),
+    contextValue,
+  });
+  expect(result.errors).toBeUndefined();
+  expect(result.data).toEqual({ maybeTodo: null });
+
+  const hit = await execute({
+    schema,
+    document: parse(`{ maybeTodo(todoId: "1") { title assignee } }`),
+    contextValue,
+  });
+  expect(hit.errors).toBeUndefined();
+  expect(hit.data).toEqual({ maybeTodo: { title: "Read", assignee: null } });
+
+  await runtime.dispose();
+});
+
+test("smoke: bare arg schemas lower to non-null; optional/NullOr stay nullable", async () => {
+  const QueryLayer = Query.layer({
+    greet: queryField(Schema.String, {
+      args: {
+        required: Schema.String,
+        opt: Schema.optional(Schema.String),
+        nullable: Schema.NullOr(Schema.String),
+      },
+      resolve: (_r, args) =>
+        Effect.succeed(`${args.required}|${args.opt ?? "-"}|${args.nullable ?? "-"}`),
+    }),
+  });
+
+  const schema = buildSchema(QueryLayer);
+  const sdl = printSchema(schema);
+  expect(sdl).toContain("greet(required: String!, opt: String, nullable: String): String");
+
+  // Omitting the required arg is a request error — validation catches it
+  // before any resolver runs.
+  const missing = await execute({
+    schema,
+    document: parse(`{ greet(opt: "x") }`),
+  });
+  expect(missing.errors).toBeDefined();
+  expect(missing.errors?.[0]?.message).toContain('"required"');
+
+  const ok = await execute({
+    schema,
+    document: parse(`{ greet(required: "hi") }`),
+  });
+  expect(ok.errors).toBeUndefined();
+  expect(ok.data).toEqual({ greet: "hi|-|-" });
 });
 
 // Avoid "no test" unused-imports

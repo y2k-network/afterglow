@@ -106,6 +106,6 @@ type Query {
 }
 
 type Mutation {
-  createTodo(input: CreateTodoInput): Todo!
+  createTodo(input: CreateTodoInput!): Todo!
   deleteTodo(id: ID!): ID!
 }

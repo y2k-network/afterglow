@@ -171,8 +171,10 @@ export const buildLettersSchema = (
         Effect.fail(new Error("intentional resolver failure")),
     }),
     // Plain scalar field — used for variable / aliasing / fragment tests.
+    // `name` is declared optional so it stays wire-nullable (`String`) —
+    // bare schemas in `args:` now lower to non-null (`String!`).
     hello: GraphQL.queryField(Schema.String, {
-      args: { name: { schema: Schema.String } },
+      args: { name: { schema: Schema.optional(Schema.String) } },
       resolve: (_r, args) =>
         Effect.succeed(`hello, ${args.name ?? "world"}`),
     }),

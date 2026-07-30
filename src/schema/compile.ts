@@ -54,7 +54,7 @@ import {
   buildPageInfoType,
   connectionArgs,
 } from "../relay/core.ts";
-import { schemaToInputType, schemaToScalar } from "./bridge.ts";
+import { isRequiredInputSchema, schemaToInputType, schemaToScalar } from "./bridge.ts";
 import { standardScalarTypes } from "../scalars.ts";
 
 const CONNECTION_ARGS = connectionArgs();
@@ -523,10 +523,16 @@ function argToGraphQLConfig(
   argDef: IRArgDef,
   registry: Map<string, GraphQLNamedType>,
 ): GraphQLArgumentConfig {
+  // A non-optional arg schema means the resolver types assume presence
+  // (ArgsShape yields S["Type"], no undefined) — so the wire type must
+  // enforce it: bare schemas lower to `T!`. `Schema.optional(...)` and
+  // NullOr/UndefinedOr stay wire-nullable.
   const inputType =
     argDef.globalId !== undefined
       ? new GraphQLNonNull(GraphQLID)
-      : schemaToInputType(argDef.schema, registry);
+      : isRequiredInputSchema(argDef.schema)
+        ? new GraphQLNonNull(schemaToInputType(argDef.schema, registry))
+        : schemaToInputType(argDef.schema, registry);
   const cfg: GraphQLArgumentConfig = { type: inputType };
   if (argDef.description !== undefined) cfg.description = argDef.description;
   return cfg;

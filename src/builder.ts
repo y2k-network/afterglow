@@ -58,6 +58,7 @@ import type {
   QueryFieldDef,
   ScalarType,
   SchemaClass,
+  WireResult,
   SubscriptionFieldDef,
 } from "./types.ts";
 
@@ -222,9 +223,18 @@ export function field<TParent, T, R = never>(
     ) => Effect.Effect<ConnectionPayload<T>, unknown, R> | ConnectionPayload<T>;
   },
 ): FieldDef<TParent, R>;
-export function field<TParent, T, R = never, A extends ArgDefs | undefined = undefined>(
+export function field<
+  TParent,
+  T,
+  R = never,
+  A extends ArgDefs | undefined = undefined,
+  NN extends boolean | undefined = undefined,
+>(
   type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top,
-  options?: FieldOptions<TParent, T, A extends ArgDefs ? ArgsShape<A> : {}, R> & { args?: A },
+  options?: FieldOptions<TParent, WireResult<T, NN>, A extends ArgDefs ? ArgsShape<A> : {}, R> & {
+    args?: A;
+    nonNull?: NN;
+  },
 ): FieldDef<TParent, R>;
 export function field(
   type: any,
@@ -627,9 +637,12 @@ export interface FieldHelper<T> {
       ) => Effect.Effect<ConnectionPayload<Type>, unknown, R> | ConnectionPayload<Type>;
     },
   ): FieldDef<T, R>;
-  <Type, R = never, A extends ArgDefs | undefined = undefined>(
+  <Type, R = never, A extends ArgDefs | undefined = undefined, NN extends boolean | undefined = undefined>(
     type: SchemaClass<Type> | ScalarType<Type> | IDMarker | Schema.Top,
-    options: FieldOptions<T, Type, A extends ArgDefs ? ArgsShape<A> : {}, R> & { args?: A },
+    options: FieldOptions<T, WireResult<Type, NN>, A extends ArgDefs ? ArgsShape<A> : {}, R> & {
+      args?: A;
+      nonNull?: NN;
+    },
   ): FieldDef<T, R>;
   <Type>(
     type: SchemaClass<Type> | ScalarType<Type> | IDMarker | Schema.Top,
@@ -898,10 +911,15 @@ export function queryField<T, R = never>(
     ) => Effect.Effect<ConnectionPayload<T>, unknown, R>;
   },
 ): QueryFieldDef<R>;
-export function queryField<T, A extends ArgDefs | undefined, R = never>(
+export function queryField<
+  T,
+  A extends ArgDefs | undefined,
+  R = never,
+  NN extends boolean | undefined = undefined,
+>(
   type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top,
   options: {
-    readonly nonNull?: boolean;
+    readonly nonNull?: NN;
     readonly semanticNonNull?: boolean;
     readonly description?: string;
     readonly args?: A;
@@ -909,7 +927,7 @@ export function queryField<T, A extends ArgDefs | undefined, R = never>(
       root: unknown,
       args: A extends ArgDefs ? ArgsShape<A> : {},
       info: GraphQLResolveInfo,
-    ) => Effect.Effect<T, unknown, R>;
+    ) => Effect.Effect<WireResult<T, NN>, unknown, R>;
   },
 ): QueryFieldDef<R>;
 export function queryField(
@@ -931,10 +949,16 @@ export function queryField(
 
 // mutationField — overloaded so that an `input: SchemaClass<I>` injects an `input: I`
 // arg into the resolver signature without the user having to declare it twice.
-export function mutationField<O, I, A extends ArgDefs | undefined = undefined, R = never>(
+export function mutationField<
+  O,
+  I,
+  A extends ArgDefs | undefined = undefined,
+  R = never,
+  NN extends boolean | undefined = undefined,
+>(
   options: {
     readonly output: SchemaClass<O> | ScalarType<O> | IDMarker | Schema.Top | ConnectionType<O>;
-    readonly nonNull?: boolean;
+    readonly nonNull?: NN;
     readonly semanticNonNull?: boolean;
     readonly description?: string;
     readonly input: SchemaClass<I>;
@@ -943,13 +967,18 @@ export function mutationField<O, I, A extends ArgDefs | undefined = undefined, R
       root: unknown,
       args: (A extends ArgDefs ? ArgsShape<A> : {}) & { readonly input: I },
       info: GraphQLResolveInfo,
-    ) => Effect.Effect<O, unknown, R>;
+    ) => Effect.Effect<WireResult<O, NN>, unknown, R>;
   },
 ): MutationFieldDef<R>;
-export function mutationField<O, A extends ArgDefs | undefined = undefined, R = never>(
+export function mutationField<
+  O,
+  A extends ArgDefs | undefined = undefined,
+  R = never,
+  NN extends boolean | undefined = undefined,
+>(
   options: {
     readonly output: SchemaClass<O> | ScalarType<O> | IDMarker | Schema.Top | ConnectionType<O>;
-    readonly nonNull?: boolean;
+    readonly nonNull?: NN;
     readonly semanticNonNull?: boolean;
     readonly description?: string;
     readonly args?: A;
@@ -957,7 +986,7 @@ export function mutationField<O, A extends ArgDefs | undefined = undefined, R = 
       root: unknown,
       args: A extends ArgDefs ? ArgsShape<A> : {},
       info: GraphQLResolveInfo,
-    ) => Effect.Effect<O, unknown, R>;
+    ) => Effect.Effect<WireResult<O, NN>, unknown, R>;
   },
 ): MutationFieldDef<R>;
 export function mutationField(options: any): MutationFieldDef<any> {
