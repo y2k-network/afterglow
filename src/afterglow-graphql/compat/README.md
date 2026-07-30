@@ -1,5 +1,9 @@
 # afterglow-graphql/compat
 
+> **Status: design note only — not implemented.** There is no `liftResolver`
+> yet and no `./compat` entry in package.json `exports`. The usage below is
+> the intended API, not a current one.
+
 Migration helpers for users coming from graphql-js. Wrap your existing
 Promise/value-returning resolvers with `liftResolver` and they become
 Effect-shaped resolvers our executor can run.
