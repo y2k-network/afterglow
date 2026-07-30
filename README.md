@@ -476,6 +476,12 @@ If a field genuinely returns `null` on success — a viewer that may
 not be logged in, for example — wrap its Schema in `Schema.NullOr`
 and the auto-emit pass leaves the directive off.
 
+Resolver return types follow the wire: unless a field declares
+`nonNull: true`, its resolver may return `Effect<T | null, E, R>` (or
+bare `T | null` where sync returns are allowed) — the missing-entity
+case needs no cast. A `nonNull: true` field rejects null-returning
+resolvers at compile time.
+
 ### Argument validation
 
 Arg schemas validate inputs before the resolver runs. Failures
@@ -489,6 +495,19 @@ f(User, {
   },
   resolve: (_p, args) => loadByEmail(args.email),
 })
+```
+
+Argument nullability follows the schema: a bare schema is a required
+arg and lowers to the non-null wrapper (`email: String!` above) —
+matching the resolver types, which assume presence. Declare an arg the
+resolver can live without with `Schema.optional(...)` (or `NullOr` /
+`UndefinedOr`), and it stays wire-nullable:
+
+```ts
+args: {
+  query: Schema.String,                      // query: String!
+  limit: Schema.optional(Schema.Int),        // limit: Int
+}
 ```
 
 Mutations get a structured-input shorthand: pass a

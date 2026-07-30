@@ -31,8 +31,6 @@ export const assignableDirective: GraphQLDirective;
 // @public (undocumented)
 export const BigIntScalar: GraphQLScalarType<bigint, string>;
 
-// Warning: (ae-forgotten-export) The symbol "GraphQLSchema" needs to be exported by the entry point index.d.ts
-//
 // @public
 export const buildSchema: <R>(schemaLayer: Layer.Layer<never, never, R>, options?: {
     readonly muteLintWarnings?: ReadonlyArray<string>;
@@ -41,9 +39,12 @@ export const buildSchema: <R>(schemaLayer: Layer.Layer<never, never, R>, options
 // @public (undocumented)
 export const catchDirective: GraphQLDirective;
 
+// Warning: (ae-forgotten-export) The symbol "ConnectionConfig" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "ConnectionClass" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
-export const Connection: (<T>(cls: SchemaClass<T>) => ConnectionType<T>) & {
-    layer<T>(cls: SchemaClass<T>): Layer.Layer<never, never, never>;
+export const Connection: (<T>(cls: SchemaClass<T>, config?: ConnectionConfig<T>) => ConnectionClass<T>) & {
+    layer<T>(cls: SchemaClass<T>, config?: ConnectionConfig<T>): Layer.Layer<never, never, never>;
 };
 
 // @public (undocumented)
@@ -63,6 +64,7 @@ export interface ConnectionPayload<T> {
         readonly startCursor: string | null;
         readonly endCursor: string | null;
     };
+    readonly totalCount?: number | null;
 }
 
 // @public (undocumented)
@@ -86,6 +88,16 @@ export function decodeGlobalId(globalId: string): {
     id: string;
 };
 
+// Warning: (ae-forgotten-export) The symbol "EffectFieldResolver" needs to be exported by the entry point index.d.ts
+//
+// @public
+const defaultFieldResolver: EffectFieldResolver;
+
+// Warning: (ae-forgotten-export) The symbol "EffectTypeResolver" needs to be exported by the entry point index.d.ts
+//
+// @public
+const defaultTypeResolver: EffectTypeResolver;
+
 // @public (undocumented)
 export const deferDirective: GraphQLDirective;
 
@@ -101,6 +113,24 @@ export const deleteEdgeDirective: GraphQLDirective;
 // @public (undocumented)
 export const deleteRecordDirective: GraphQLDirective;
 
+// @public
+interface DocumentNode {
+    // Warning: (ae-forgotten-export) The symbol "DefinitionNode" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    readonly definitions: ReadonlyArray<DefinitionNode>;
+    // Warning: (ae-forgotten-export) The symbol "Kind" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    readonly kind: Kind.DOCUMENT;
+    // Warning: (ae-forgotten-export) The symbol "Location" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    readonly loc?: Location;
+    // (undocumented)
+    readonly tokenCount?: number | undefined;
+}
+
 // @public (undocumented)
 export const edgePayload: <T>(cursor: string, node: T) => {
     cursor: string;
@@ -112,6 +142,78 @@ export const EmailAddressScalar: GraphQLScalarType<string, string>;
 
 // @public (undocumented)
 export function encodeGlobalId(typename: string, rawId: string): string;
+
+declare namespace Engine {
+    export {
+        parse,
+        parseSync,
+        validate,
+        validateEffect,
+        specifiedRules,
+        recommendedRules,
+        execute,
+        defaultFieldResolver,
+        defaultTypeResolver,
+        ExecutionArgs,
+        ExecutionResult,
+        FormattedExecutionResult,
+        subscribe,
+        graphql,
+        GraphQLArgs,
+        isGraphQLError,
+        GraphQLError,
+        DocumentNode,
+        GraphQLSchema
+    }
+}
+
+// @public
+function execute<R = never>(args: ExecutionArgs): Effect.Effect<ExecutionResult, never, R>;
+
+// @public (undocumented)
+interface ExecutionArgs {
+    // (undocumented)
+    contextValue?: unknown;
+    // (undocumented)
+    document: DocumentNode;
+    // (undocumented)
+    fieldResolver?: Maybe<EffectFieldResolver>;
+    // (undocumented)
+    operationName?: Maybe<string>;
+    // (undocumented)
+    options?: {
+        maxCoercionErrors?: number;
+        trace?: boolean;
+    };
+    // (undocumented)
+    rootValue?: unknown;
+    // (undocumented)
+    schema: GraphQLSchema;
+    // Warning: (ae-forgotten-export) The symbol "EffectSubscribeResolver" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    subscribeFieldResolver?: Maybe<EffectSubscribeResolver>;
+    // (undocumented)
+    typeResolver?: Maybe<EffectTypeResolver>;
+    // Warning: (ae-forgotten-export) The symbol "Maybe" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    variableValues?: Maybe<{
+        readonly [variable: string]: unknown;
+    }>;
+}
+
+// Warning: (ae-forgotten-export) The symbol "ObjMap" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+interface ExecutionResult<TData = ObjMap<unknown>, TExtensions = ObjMap<unknown>> {
+    // (undocumented)
+    data?: TData | null;
+    // (undocumented)
+    errors?: ReadonlyArray<GraphQLError>;
+    // (undocumented)
+    extensions?: TExtensions;
+}
 
 // @public
 export const fetchableDirective: GraphQLDirective;
@@ -126,11 +228,13 @@ export function field<TParent, T, R = never>(type: ConnectionType<T>, options: {
 
 // Warning: (ae-forgotten-export) The symbol "ArgDefs" needs to be exported by the entry point index.d.ts
 // Warning: (ae-forgotten-export) The symbol "FieldOptions" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "WireResult" needs to be exported by the entry point index.d.ts
 // Warning: (ae-forgotten-export) The symbol "ArgsShape" needs to be exported by the entry point index.d.ts
 //
 // @public (undocumented)
-export function field<TParent, T, R = never, A extends ArgDefs | undefined = undefined>(type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top, options?: FieldOptions<TParent, T, A extends ArgDefs ? ArgsShape<A> : {}, R> & {
+export function field<TParent, T, R = never, A extends ArgDefs | undefined = undefined, NN extends boolean | undefined = undefined>(type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top, options?: FieldOptions<TParent, WireResult<T, NN>, A extends ArgDefs ? ArgsShape<A> : {}, R> & {
     args?: A;
+    nonNull?: NN;
 }): FieldDef<TParent, R>;
 
 // @public (undocumented)
@@ -142,6 +246,18 @@ export interface FieldDef<TParent, R> {
         readonly parent: (p: TParent) => TParent;
         readonly r: () => R;
     };
+}
+
+// @public (undocumented)
+interface FormattedExecutionResult<TData = ObjMap<unknown>, TExtensions = ObjMap<unknown>> {
+    // (undocumented)
+    data?: TData | null;
+    // Warning: (ae-forgotten-export) The symbol "GraphQLFormattedError" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    errors?: ReadonlyArray<GraphQLFormattedError>;
+    // (undocumented)
+    extensions?: TExtensions;
 }
 
 // @public (undocumented)
@@ -186,6 +302,114 @@ declare namespace GraphQL {
 }
 
 // @public (undocumented)
+function graphql<R = never>(args: GraphQLArgs): Effect.Effect<ExecutionResult, never, R>;
+
+// @public (undocumented)
+interface GraphQLArgs {
+    // (undocumented)
+    readonly contextValue?: unknown;
+    // (undocumented)
+    readonly operationName?: string | null;
+    // (undocumented)
+    readonly rootValue?: unknown;
+    // (undocumented)
+    readonly schema: GraphQLSchema;
+    // (undocumented)
+    readonly source: string;
+    // (undocumented)
+    readonly variableValues?: Record<string, unknown>;
+}
+
+// Warning: (ae-forgotten-export) The symbol "GraphQLSyntaxError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLLocatedError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLValidationError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLValidationLimitError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLOperationResolutionError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLRootTypeError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLSubscriptionError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLRuntimeTypeError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLFieldCompletionError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLVariableCoercionError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLVariableCoercionLimitError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLArgumentCoercionError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLInputCoercionError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLScalarCoercionError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLSchemaConstructionError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLSchemaValidationError" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "GraphQLNameError" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+type GraphQLError = GraphQLSyntaxError | GraphQLLocatedError | GraphQLValidationError | GraphQLValidationLimitError | GraphQLOperationResolutionError | GraphQLRootTypeError | GraphQLSubscriptionError | GraphQLRuntimeTypeError | GraphQLFieldCompletionError | GraphQLVariableCoercionError | GraphQLVariableCoercionLimitError | GraphQLArgumentCoercionError | GraphQLInputCoercionError | GraphQLScalarCoercionError | GraphQLSchemaConstructionError | GraphQLSchemaValidationError | GraphQLNameError;
+
+// @public
+class GraphQLSchema {
+    // (undocumented)
+    get [Symbol.toStringTag](): string;
+    constructor(config: Readonly<GraphQLSchemaConfig>);
+    // (undocumented)
+    __validationErrors: Maybe<ReadonlyArray<GraphQLError>>;
+    // Warning: (ae-forgotten-export) The symbol "SchemaDefinitionNode" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    astNode: Maybe<SchemaDefinitionNode>;
+    // (undocumented)
+    description: Maybe<string>;
+    // Warning: (ae-forgotten-export) The symbol "SchemaExtensionNode" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    extensionASTNodes: ReadonlyArray<SchemaExtensionNode>;
+    // Warning: (ae-forgotten-export) The symbol "GraphQLSchemaExtensions" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    extensions: Readonly<GraphQLSchemaExtensions>;
+    // (undocumented)
+    getDirective(name: string): Maybe<GraphQLDirective>;
+    // (undocumented)
+    getDirectives(): ReadonlyArray<GraphQLDirective>;
+    // Warning: (ae-forgotten-export) The symbol "GraphQLInterfaceType" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    getImplementations(interfaceType: GraphQLInterfaceType): {
+        objects: ReadonlyArray<GraphQLObjectType>;
+        interfaces: ReadonlyArray<GraphQLInterfaceType>;
+    };
+    // (undocumented)
+    getMutationType(): Maybe<GraphQLObjectType>;
+    // Warning: (ae-forgotten-export) The symbol "GraphQLAbstractType" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    getPossibleTypes(abstractType: GraphQLAbstractType): ReadonlyArray<GraphQLObjectType>;
+    // Warning: (ae-forgotten-export) The symbol "GraphQLObjectType" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    getQueryType(): Maybe<GraphQLObjectType>;
+    // Warning: (ae-forgotten-export) The symbol "OperationTypeNode" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    getRootType(operation: OperationTypeNode): Maybe<GraphQLObjectType>;
+    // (undocumented)
+    getSubscriptionType(): Maybe<GraphQLObjectType>;
+    // Warning: (ae-forgotten-export) The symbol "GraphQLNamedType" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    getType(name: string): GraphQLNamedType | undefined;
+    // Warning: (ae-forgotten-export) The symbol "TypeMap" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    getTypeMap(): TypeMap;
+    // (undocumented)
+    isSubType(abstractType: GraphQLAbstractType, maybeSubType: GraphQLObjectType | GraphQLInterfaceType): boolean;
+    // Warning: (ae-forgotten-export) The symbol "GraphQLSchemaConfig" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    static make(config: Readonly<GraphQLSchemaConfig>): Effect.Effect<GraphQLSchema, GraphQLError, never>;
+    // Warning: (ae-forgotten-export) The symbol "GraphQLSchemaNormalizedConfig" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    toConfig(): GraphQLSchemaNormalizedConfig;
+}
+
+// @public (undocumented)
 export const ID: IDMarker;
 
 // Warning: (ae-forgotten-export) The symbol "GlobalIdArgShape" needs to be exported by the entry point index.d.ts
@@ -216,6 +440,9 @@ export class InvalidGlobalIdError extends InvalidGlobalIdError_base<{
     readonly reason: string;
 }> {
 }
+
+// @public (undocumented)
+function isGraphQLError(error: unknown): error is GraphQLError;
 
 // @public (undocumented)
 export const JSONScalar: GraphQLScalarType<unknown, unknown>;
@@ -264,26 +491,26 @@ export const Mutation: {
 };
 
 // @public (undocumented)
-export function mutationField<O, I, A extends ArgDefs | undefined = undefined, R = never>(options: {
+export function mutationField<O, I, A extends ArgDefs | undefined = undefined, R = never, NN extends boolean | undefined = undefined>(options: {
     readonly output: SchemaClass<O> | ScalarType<O> | IDMarker | Schema.Top | ConnectionType<O>;
-    readonly nonNull?: boolean;
+    readonly nonNull?: NN;
     readonly semanticNonNull?: boolean;
     readonly description?: string;
     readonly input: SchemaClass<I>;
     readonly args?: A;
     readonly resolve: (root: unknown, args: (A extends ArgDefs ? ArgsShape<A> : {}) & {
         readonly input: I;
-    }, info: GraphQLResolveInfo) => Effect.Effect<O, unknown, R>;
+    }, info: GraphQLResolveInfo) => Effect.Effect<WireResult<O, NN>, unknown, R>;
 }): MutationFieldDef<R>;
 
 // @public (undocumented)
-export function mutationField<O, A extends ArgDefs | undefined = undefined, R = never>(options: {
+export function mutationField<O, A extends ArgDefs | undefined = undefined, R = never, NN extends boolean | undefined = undefined>(options: {
     readonly output: SchemaClass<O> | ScalarType<O> | IDMarker | Schema.Top | ConnectionType<O>;
-    readonly nonNull?: boolean;
+    readonly nonNull?: NN;
     readonly semanticNonNull?: boolean;
     readonly description?: string;
     readonly args?: A;
-    readonly resolve: (root: unknown, args: A extends ArgDefs ? ArgsShape<A> : {}, info: GraphQLResolveInfo) => Effect.Effect<O, unknown, R>;
+    readonly resolve: (root: unknown, args: A extends ArgDefs ? ArgsShape<A> : {}, info: GraphQLResolveInfo) => Effect.Effect<WireResult<O, NN>, unknown, R>;
 }): MutationFieldDef<R>;
 
 // @public (undocumented)
@@ -318,11 +545,20 @@ export interface PaginationArgs {
     readonly last?: number;
 }
 
+// Warning: (ae-forgotten-export) The symbol "Source" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "ParseOptions" needs to be exported by the entry point index.d.ts
+//
+// @public
+function parse(source: string | Source, options?: ParseOptions | undefined): DocumentNode;
+
 // @public (undocumented)
 export const parseGlobalId: (id: string) => {
     typename: string;
     id: string;
 };
+
+// @public
+function parseSync(source: string | Source, options?: ParseOptions | undefined): DocumentNode;
 
 // @public (undocumented)
 export const prependEdgeDirective: GraphQLDirective;
@@ -344,18 +580,19 @@ export const Query: {
 };
 
 // @public (undocumented)
-export function queryField<T, R = never>(type: ConnectionType<T>, options: {
+export function queryField<T, R = never, A extends ArgDefs | undefined = undefined>(type: ConnectionType<T>, options: {
     readonly description?: string;
-    readonly resolve: (root: unknown, args: PaginationArgs, info: GraphQLResolveInfo) => Effect.Effect<ConnectionPayload<T>, unknown, R>;
+    readonly args?: A;
+    readonly resolve: (root: unknown, args: (A extends ArgDefs ? ArgsShape<A> : {}) & PaginationArgs, info: GraphQLResolveInfo) => Effect.Effect<ConnectionPayload<T>, unknown, R>;
 }): QueryFieldDef<R>;
 
 // @public (undocumented)
-export function queryField<T, A extends ArgDefs | undefined, R = never>(type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top, options: {
-    readonly nonNull?: boolean;
+export function queryField<T, A extends ArgDefs | undefined, R = never, NN extends boolean | undefined = undefined>(type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top, options: {
+    readonly nonNull?: NN;
     readonly semanticNonNull?: boolean;
     readonly description?: string;
     readonly args?: A;
-    readonly resolve: (root: unknown, args: A extends ArgDefs ? ArgsShape<A> : {}, info: GraphQLResolveInfo) => Effect.Effect<T, unknown, R>;
+    readonly resolve: (root: unknown, args: A extends ArgDefs ? ArgsShape<A> : {}, info: GraphQLResolveInfo) => Effect.Effect<WireResult<T, NN>, unknown, R>;
 }): QueryFieldDef<R>;
 
 // @public (undocumented)
@@ -368,6 +605,11 @@ export interface QueryFieldDef<R> {
 
 // @public (undocumented)
 export const rawResponseTypeDirective: GraphQLDirective;
+
+// Warning: (ae-forgotten-export) The symbol "MaxIntrospectionDepthRule" needs to be exported by the entry point index.d.ts
+//
+// @public
+const recommendedRules: readonly (typeof MaxIntrospectionDepthRule)[];
 
 // @public (undocumented)
 export const refetchableDirective: GraphQLDirective;
@@ -406,6 +648,9 @@ export type SchemaClass<T> = abstract new (...args: any[]) => T;
 export const semanticNonNullDirective: GraphQLDirective;
 
 // @public
+const specifiedRules: ReadonlyArray<ValidationRule>;
+
+// @public
 export const standardScalarTypes: ReadonlyArray<GraphQLScalarType>;
 
 // @public
@@ -424,6 +669,9 @@ export const streamConnectionDirective: GraphQLDirective;
 
 // @public (undocumented)
 export const streamDirective: GraphQLDirective;
+
+// @public
+function subscribe<R = never>(args: ExecutionArgs): Effect.Effect<Stream.Stream<ExecutionResult, unknown, R> | ExecutionResult, never, R>;
 
 // @public (undocumented)
 export const Subscription: {
@@ -454,6 +702,7 @@ export function toConnection<T>(rows: ReadonlyArray<T>, options: {
     cursor: (t: T) => string;
     hasNextPage: boolean;
     hasPreviousPage?: boolean;
+    totalCount?: number;
 }): ConnectionPayload<T>;
 
 // @public (undocumented)
@@ -464,6 +713,20 @@ export const URLScalar: GraphQLScalarType<URL, string>;
 
 // @public (undocumented)
 export const UUIDScalar: GraphQLScalarType<string, string>;
+
+// Warning: (ae-forgotten-export) The symbol "ValidationRule" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "TypeInfo" needs to be exported by the entry point index.d.ts
+//
+// @public
+function validate<R = never>(schema: GraphQLSchema, documentAST: DocumentNode, rules?: ReadonlyArray<ValidationRule>, options?: {
+    maxErrors?: number;
+},
+typeInfo?: TypeInfo): ReadonlyArray<GraphQLError>;
+
+// @public (undocumented)
+function validateEffect<R = never>(schema: GraphQLSchema, documentAST: DocumentNode, rules?: ReadonlyArray<ValidationRule>, options?: {
+    maxErrors?: number;
+}, typeInfo?: TypeInfo): Effect.Effect<void, ReadonlyArray<GraphQLError>, R>;
 
 // @public (undocumented)
 export const Viewer: {
@@ -479,9 +742,9 @@ export const waterfallDirective: GraphQLDirective;
 
 // Warnings were encountered during analysis:
 //
-// src/builder.ts:626:9 - (ae-forgotten-export) The symbol "FieldHelper" needs to be exported by the entry point index.d.ts
-// src/builder.ts:626:9 - (ae-forgotten-export) The symbol "NodeFieldOutput" needs to be exported by the entry point index.d.ts
-// src/builder.ts:905:5 - (ae-forgotten-export) The symbol "GraphQLResolveInfo" needs to be exported by the entry point index.d.ts
+// src/builder.ts:830:9 - (ae-forgotten-export) The symbol "FieldHelper" needs to be exported by the entry point index.d.ts
+// src/builder.ts:830:9 - (ae-forgotten-export) The symbol "NodeFieldOutput" needs to be exported by the entry point index.d.ts
+// src/builder.ts:1221:5 - (ae-forgotten-export) The symbol "GraphQLResolveInfo" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

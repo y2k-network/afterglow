@@ -1071,8 +1071,8 @@ export const Connection = Object.assign(
   },
   {
     /**
-     * Layer-form registration — the Layer-driven twin of `Connection(T,
-     * config)`. Use it to declare a connection (and its extension fields)
+     * Layer-form registration — the Layer-driven twin of the `Connection`
+     * call form. Use it to declare a connection (and its extension fields)
      * as part of the SchemaLayer composition instead of at a reference
      * site; extensions from all declaration sites accumulate.
      */

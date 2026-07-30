@@ -117,6 +117,86 @@ const UserNode = GraphQL.Node.layer(User)({
 })
 ```
 
+### Extended connections
+
+The Cursor Connections spec permits additional connection fields.
+Declare an extended connection type by subclassing — the same
+effect-native idiom as `Schema.Class` — and use it wherever that shape
+is wanted. Bare `GraphQL.Connection(T)` elsewhere stays the canonical
+spec shape, and every connection type over the same node shares one
+`Edge` type.
+
+```ts
+class ArticleFeedConnection extends GraphQL.Connection(Article, {
+  // Same `fields` grammar as Node.layer. The resolver parent is the
+  // ConnectionPayload the field's resolver returned; bare schemas are
+  // payload-property pass-throughs.
+  fields: (f) => ({ totalCount: f(Schema.Int) }),
+}) {}
+
+const QueryLayer = GraphQL.Query.layer({
+  articles: GraphQL.queryField(ArticleFeedConnection, {
+    resolve: (_root, args) =>
+      Effect.gen(function* () {
+        const db = yield* Database
+        const page = yield* db.listArticles(args)
+        return GraphQL.toConnection(page.rows, {
+          cursor: (a) => Buffer.from(`cursor:${a.id}`).toString("base64"),
+          hasNextPage: page.hasNextPage,
+          totalCount: page.totalCount, // carried on the payload for the pass-through
+        })
+      }),
+  }),
+})
+```
+
+The subclass names the GraphQL type (it must end in `Connection` —
+Relay identifies connections by that suffix), and the canonical
+`edges` / `pageInfo` names are reserved: declaring them throws at
+build time. `GraphQL.Connection.layer(T, { fields })` is the
+Layer-form twin for declaring the extension as part of the
+SchemaLayer composition.
+
+## Field output types
+
+Field types are Effect Schemas; the builder lowers them to GraphQL:
+
+```ts
+class ArticleTag extends Schema.Class<ArticleTag>("ArticleTag")({
+  label: Schema.String,
+  weight: Schema.Int,
+}) {}
+
+const ArticleStatus = Schema.Literals(["DRAFT", "PUBLISHED", "ARCHIVED"])
+  .annotate({ identifier: "ArticleStatus" })
+
+const ArticleNode = GraphQL.Node.layer(Article)({
+  fields: () => ({
+    wordCount: Schema.Int,                //  wordCount: Int
+    rating: Schema.Number,                //  rating: Float
+    status: ArticleStatus,                //  status: ArticleStatus (enum)
+    tags: Schema.Array(ArticleTag),       //  tags: [ArticleTag!]
+    related: Schema.Array(Schema.NullOr(ArticleTag)), //  related: [ArticleTag]
+  }),
+  load: (id) => loadArticle(id),
+})
+```
+
+- **`Int` vs `Float`** — int-checked schemas (`Schema.Int`) lower to
+  `Int`; plain `Schema.Number` stays `Float`. GraphQL `Int` is 32-bit
+  signed per spec — larger values belong on the `BigInt` standard
+  scalar.
+- **Enums** — an identifier-annotated string-literal union lowers to a
+  GraphQL `enum`, in both output and input positions, deduped to one
+  type.
+- **Lists** — `Schema.Array(T)` lowers to `[T!]`;
+  `Schema.Array(Schema.NullOr(T))` to `[T]`. Wire nullability of the
+  list itself stays on the field (`nonNull` option).
+- **Plain object types** — a `Schema.Class` used in output position
+  auto-registers a plain (non-Node) object type derived from its
+  fields. Classes registered via `Node.layer` keep their curated
+  `fields:` definition — the node always wins.
+
 ## Mutations
 
 Structured input via a `Schema.Class` — the class name becomes the
