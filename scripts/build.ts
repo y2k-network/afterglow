@@ -51,4 +51,4 @@ if (code !== 0) {
   process.exit(code);
 }
 
-console.log("build: ok — dist entries (index, graphql, execution, language, validation) + declarations emitted.");
+console.log("build: ok — dist/index.js + declarations emitted.");
