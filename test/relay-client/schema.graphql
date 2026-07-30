@@ -85,7 +85,7 @@ type TodoEdge {
 }
 
 input CreateTodoInput {
-  title: String
+  title: String!
 }
 
 type Query {

@@ -852,6 +852,48 @@ test("smoke: nullable resolvers return null bare — no cast; nonNull: true stil
   await runtime.dispose();
 });
 
+test("smoke: input object fields lower to non-null the same way top-level args do", async () => {
+  const TraitFilterInput = Schema.Struct({
+    traitType: Schema.String,
+    value: Schema.String,
+    minWeight: Schema.optional(Schema.Int),
+    label: Schema.NullOr(Schema.String),
+  }).annotate({ identifier: "TraitFilterInput" });
+
+  const QueryLayer = Query.layer({
+    filterTraits: queryField(Schema.Boolean, {
+      args: { filter: TraitFilterInput },
+      resolve: (_r, args) =>
+        Effect.succeed(args.filter.traitType === "Background" && args.filter.value === "Aqua"),
+    }),
+  });
+
+  const schema = buildSchema(QueryLayer);
+  const sdl = printSchema(schema);
+  // Non-optional struct fields lower to the non-null wrapper — same rule as
+  // top-level required args (argToGraphQLConfig in compile.ts).
+  expect(sdl).toMatch(
+    /input TraitFilterInput \{\s*traitType: String!\s*value: String!\s*minWeight: Int\s*label: String\s*\}/,
+  );
+
+  const result = await execute({
+    schema,
+    document: parse(
+      `{ filterTraits(filter: { traitType: "Background", value: "Aqua" }) }`,
+    ),
+  });
+  expect(result.errors).toBeUndefined();
+  expect(result.data).toEqual({ filterTraits: true });
+
+  // Omitting a required struct field is a request error, caught before the
+  // resolver runs — same as omitting a required top-level arg.
+  const missing = await execute({
+    schema,
+    document: parse(`{ filterTraits(filter: { value: "Aqua" }) }`),
+  });
+  expect(missing.errors).toBeDefined();
+});
+
 test("smoke: bare arg schemas lower to non-null; optional/NullOr stay nullable", async () => {
   const QueryLayer = Query.layer({
     greet: queryField(Schema.String, {

@@ -3,6 +3,7 @@ import {
   GraphQLEnumType,
   GraphQLInputObjectType,
   GraphQLList,
+  GraphQLNonNull,
   GraphQLScalarType,
   type GraphQLEnumValueConfig,
   type GraphQLInputFieldConfig,
@@ -69,7 +70,15 @@ export function hasIntCheck(ast: SchemaAST.AST): boolean {
 }
 
 export function isRequiredInputSchema(schema: Schema.Top): boolean {
-  const ast = schema.ast;
+  return isRequiredInputAst(schema.ast);
+}
+
+/**
+ * AST-level core of `isRequiredInputSchema` — shared with struct field
+ * lowering (`objectsToInputType`), which only has the property signature's
+ * AST, not a `Schema.Top` wrapper, to test presence against.
+ */
+function isRequiredInputAst(ast: SchemaAST.AST): boolean {
   if (ast.context?.isOptional === true) return false;
   if (
     ast._tag === "Union" &&
@@ -275,8 +284,13 @@ function objectsToInputType(
       for (const ps of ast.propertySignatures) {
         // GraphQL field names must be strings.
         if (typeof ps.name !== "string") continue;
+        // A non-optional property demands a value — the wire must enforce
+        // it too, same rule as top-level required args (argToGraphQLConfig
+        // in compile.ts): bare schemas lower to the non-null wrapper,
+        // Schema.optional/optionalKey and NullOr/UndefinedOr stay nullable.
+        const base = astToInputType(ps.type, registry);
         fields[ps.name] = {
-          type: astToInputType(ps.type, registry),
+          type: isRequiredInputAst(ps.type) ? new GraphQLNonNull(base) : base,
         };
       }
       return fields;

@@ -514,6 +514,19 @@ args: {
 }
 ```
 
+The same rule applies one level down: fields of an identifier-annotated
+`Schema.Struct` used as an input object type (a mutation's `input`, or
+a struct passed directly as an arg schema) lower field-by-field the
+same way — non-optional fields get `!`, `Schema.optional` /
+`Schema.optionalKey` / `NullOr` / `UndefinedOr` fields don't:
+
+```ts
+const TraitFilterInput = Schema.Struct({
+  traitType: Schema.String,           // traitType: String!
+  minWeight: Schema.optional(Schema.Int), // minWeight: Int
+}).annotate({ identifier: "TraitFilterInput" })
+```
+
 Mutations get a structured-input shorthand: pass a
 `Schema.Class<Input>` to `mutationField({ input: ... })` and the
 resolver's `args.input` is typed as the class instance:

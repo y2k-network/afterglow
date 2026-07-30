@@ -1,5 +1,5 @@
 /**
- * @generated SignedSource<<dfe8604df2b7fb944251245bae5dccac>>
+ * @generated SignedSource<<3795e5405f73e6becce8beabafc26170>>
  * @lightSyntaxTransform
  * @nogrep
  */
@@ -10,7 +10,7 @@
 
 import { ConcreteRequest } from 'relay-runtime';
 export type CreateTodoInput = {
-  title?: string | null | undefined;
+  title: string;
 };
 export type CreateTodoMutation$variables = {
   connections: ReadonlyArray<string>;
