@@ -30,26 +30,6 @@
       "bun": "./src/index.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
-    },
-    "./graphql": {
-      "types": "./dist/afterglow-graphql/graphql.d.ts",
-      "bun": "./src/afterglow-graphql/graphql.ts",
-      "default": "./src/afterglow-graphql/graphql.ts"
-    },
-    "./execution": {
-      "types": "./dist/afterglow-graphql/execution/index.d.ts",
-      "bun": "./src/afterglow-graphql/execution/index.ts",
-      "default": "./src/afterglow-graphql/execution/index.ts"
-    },
-    "./language": {
-      "types": "./dist/afterglow-graphql/language/index.d.ts",
-      "bun": "./src/afterglow-graphql/language/index.ts",
-      "default": "./src/afterglow-graphql/language/index.ts"
-    },
-    "./validation": {
-      "types": "./dist/afterglow-graphql/validation/index.d.ts",
-      "bun": "./src/afterglow-graphql/validation/index.ts",
-      "default": "./src/afterglow-graphql/validation/index.ts"
     }
   },
   "files": [

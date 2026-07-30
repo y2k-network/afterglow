@@ -20,6 +20,11 @@ if (existsSync(dist)) {
 }
 
 const result = await Bun.build({
+  // Single entry on purpose: the engine surface (`Engine.parse/validate/
+  // execute`) is exported from index.ts, so builder and executor share one
+  // module graph — one copy of the vendored graphql type system, and no
+  // reliance on bundle splitting (Bun 1.3.x emits bindingless re-export
+  // entries for barrel entrypoints when splitting is enabled).
   entrypoints: [`${root}src/index.ts`],
   outdir: dist,
   target: "node",
@@ -46,4 +51,4 @@ if (code !== 0) {
   process.exit(code);
 }
 
-console.log("build: ok — dist/index.js + dist/index.d.ts emitted.");
+console.log("build: ok — dist entries (index, graphql, execution, language, validation) + declarations emitted.");

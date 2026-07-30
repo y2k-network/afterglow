@@ -131,3 +131,8 @@ export function Input<S extends Schema.Top>(name: string, schema: S): S {
 
 // Namespace export — the canonical reference style (`GraphQL.Node.layer(...)`).
 export * as GraphQL from "./graphql-namespace.ts";
+
+// Engine surface — parse/validate/execute for transports driving a built
+// schema. Lives on the root entry so builder and executor always share one
+// module graph (see src/engine.ts).
+export * as Engine from "./engine.ts";
