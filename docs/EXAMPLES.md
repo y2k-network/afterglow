@@ -121,13 +121,14 @@ const UserNode = GraphQL.Node.layer(User)({
 
 The Cursor Connections spec permits additional connection fields.
 Declare an extended connection type by subclassing — the same
-effect-native idiom as `Schema.Class` — and use it wherever that shape
-is wanted. Bare `GraphQL.Connection(T)` elsewhere stays the canonical
-spec shape, and every connection type over the same node shares one
-`Edge` type.
+effect-native idiom as `Schema.Class`, including the positional
+identifier string (runtime class names get mangled by minifiers and
+are never consulted) — and use it wherever that shape is wanted. Bare
+`GraphQL.Connection(T)` elsewhere stays the canonical spec shape, and
+every connection type over the same node shares one `Edge` type.
 
 ```ts
-class ArticleFeedConnection extends GraphQL.Connection(Article, {
+class ArticleFeedConnection extends GraphQL.Connection(Article, "ArticleFeedConnection", {
   // Same `fields` grammar as Node.layer. The resolver parent is the
   // ConnectionPayload the field's resolver returned; bare schemas are
   // payload-property pass-throughs.
@@ -150,11 +151,11 @@ const QueryLayer = GraphQL.Query.layer({
 })
 ```
 
-The subclass names the GraphQL type (it must end in `Connection` —
+The identifier names the GraphQL type (it must end in `Connection` —
 Relay identifies connections by that suffix), and the canonical
 `edges` / `pageInfo` names are reserved: declaring them throws at
-build time. `GraphQL.Connection.layer(T, { fields })` is the
-Layer-form twin for declaring the extension as part of the
+build time. `GraphQL.Connection.layer(T, identifier, { fields })` is
+the Layer-form twin for declaring the extension as part of the
 SchemaLayer composition.
 
 ## Field output types

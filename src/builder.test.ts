@@ -906,10 +906,11 @@ test("smoke: plain-object lists, output enums, Int lowering, extendable connecti
     load: () => Effect.succeed(article),
   });
 
-  // Per-instance connection extension: the subclass IS its own GraphQL type
-  // (named after the class), reusable in any field position. Bare
-  // `Connection(T)` elsewhere keeps the canonical zero-config type.
-  class ArticleFeedConnection extends Connection(ArticleT, {
+  // Per-instance connection extension: the subclass IS its own GraphQL
+  // type, named by the positional identifier string (like Schema.Class —
+  // runtime class names get mangled by minifiers and are never consulted).
+  // Bare `Connection(T)` elsewhere keeps the canonical zero-config type.
+  class ArticleFeedConnection extends Connection(ArticleT, "ArticleFeedConnection", {
     fields: (f) => ({ totalCount: f(Schema.Int) }),
   }) {}
 
@@ -1001,9 +1002,10 @@ test("smoke: bare connections stay canonical — no extension fields; reserved n
   expect(sdl).toMatch(/type NoteTConnection \{\s*edges: \[NoteTEdge\]!\s*pageInfo: PageInfo!\s*\}/);
   expect(sdl).not.toContain("totalCount");
 
-  // Layer-form extension: Connection.layer(T, { fields }) composes into the
-  // SchemaLayer; a bare Connection(T) reference elsewhere keeps it.
-  const ExtensionLayer = Connection.layer(NoteT, {
+  // Layer-form extension: Connection.layer(T, identifier, { fields })
+  // composes into the SchemaLayer — here explicitly extending the default
+  // connection type; a bare Connection(T) reference elsewhere keeps it.
+  const ExtensionLayer = Connection.layer(NoteT, "NoteTConnection", {
     fields: (f) => ({ totalCount: f(Schema.Int) }),
   });
   const extended = buildSchema(Layer.mergeAll(NoteNode, QueryLayer, ExtensionLayer));
@@ -1011,10 +1013,27 @@ test("smoke: bare connections stay canonical — no extension fields; reserved n
     /type NoteTConnection \{\s*edges: \[NoteTEdge\]!\s*pageInfo: PageInfo!\s*totalCount: Int\s*\}/,
   );
 
+  // Identifier is the single naming authority — a class whose runtime name
+  // is "mangled" still emits the declared type name, and a bad suffix
+  // throws at declaration time.
+  class P extends Connection(NoteT, "PinnedNotesConnection", {
+    fields: (f) => ({ totalCount: f(Schema.Int) }),
+  }) {}
+  const PinnedQuery = Query.layer({
+    pinned: queryField(P, {
+      resolve: () =>
+        Effect.succeed(toConnection([], { cursor: () => "", hasNextPage: false })),
+    }),
+  });
+  const mangledSafe = buildSchema(Layer.mergeAll(NoteNode, PinnedQuery));
+  expect(printSchema(mangledSafe)).toContain("type PinnedNotesConnection {");
+  expect(printSchema(mangledSafe)).not.toContain("type P {");
+  expect(() => Connection(NoteT, "PinnedNotes")).toThrow(/must end in "Connection"/);
+
   // Canonical shape is not overridable.
   const BadQuery = Query.layer({
     bad: queryField(
-      Connection(NoteT, { fields: (f) => ({ edges: f(Schema.String) }) }),
+      Connection(NoteT, "BadNotesConnection", { fields: (f) => ({ edges: f(Schema.String) }) }),
       { resolve: () => Effect.succeed(toConnection([], { cursor: () => "", hasNextPage: false })) },
     ),
   });

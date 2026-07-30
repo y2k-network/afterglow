@@ -313,19 +313,12 @@ const outputTypeToIR = (t: FieldOutputType | ConnectionType<unknown>): IROutputT
     CONNECTION_NODE_KEY in (t as object)
   ) {
     const nodeName = (t as unknown as Record<symbol, unknown>)[CONNECTION_NODE_KEY] as string;
-    // A subclass (`class ArticleConnection extends Connection(Article, ...)`)
-    // names the GraphQL type after itself; the bare base keeps the
-    // zero-config `${Node}Connection` name. Distinguished by symbol
-    // ownership: the base owns the marker, subclasses only inherit it.
-    const declaredName =
-      typeof t === "function" && !Object.hasOwn(t, CONNECTION_NODE_KEY) && t.name !== ""
-        ? t.name
-        : undefined;
-    if (declaredName !== undefined && !declaredName.endsWith("Connection")) {
-      throw new Error(
-        `@y2k-network/afterglow: connection class "${declaredName}" must end in "Connection" — Relay identifies connections by that suffix.`,
-      );
-    }
+    // The type name comes from the positional identifier string (like
+    // Schema.Class) or falls back to the zero-config `${Node}Connection`.
+    // Runtime class names are never consulted — minifiers mangle them.
+    const declaredName = (t as unknown as Record<symbol, unknown>)[CONNECTION_NAME_KEY] as
+      | string
+      | undefined;
     const extend = (t as unknown as Record<symbol, unknown>)[CONNECTION_EXTEND_KEY] as
       | ConnectionExtension
       | undefined;
@@ -971,6 +964,7 @@ export const Viewer = {
 // ---------------------------------------------------------------------------
 
 const CONNECTION_NODE_KEY = Symbol("v2/connection-node-name");
+const CONNECTION_NAME_KEY = Symbol("v2/connection-type-name");
 const CONNECTION_EXTEND_KEY = Symbol("v2/connection-extend");
 
 /**
@@ -998,6 +992,11 @@ const makeConnectionFragment = (
   extend: ConnectionExtension | undefined,
   declaredName?: string,
 ): IRConnectionFragment => {
+  if (declaredName !== undefined && !declaredName.endsWith("Connection")) {
+    throw new Error(
+      `@y2k-network/afterglow: connection type "${declaredName}" must end in "Connection" — Relay identifies connections by that suffix.`,
+    );
+  }
   const connectionName = declaredName ?? `${nodeName}Connection`;
   let extraFields: Record<string, IRFieldDef> | undefined;
   if (extend !== undefined) {
@@ -1021,76 +1020,120 @@ const makeConnectionFragment = (
 };
 
 /**
- * What `Connection(T, config?)` returns: a ConnectionType marker that is
- * ALSO a subclassable payload class, so the effect-native class idiom works:
+ * What `Connection(...)` returns: a ConnectionType marker that is ALSO a
+ * subclassable payload class, so the effect-native class idiom works:
  *
  * ```ts
- * class ArticleConnection extends GraphQL.Connection(Article, {
- *   fields: (f) => ({ totalCount: f(Schema.Int) }),
- * }) {}
+ * class ArticleFeedConnection extends GraphQL.Connection(
+ *   Article,
+ *   "ArticleFeedConnection",
+ *   { fields: (f) => ({ totalCount: f(Schema.Int) }) },
+ * ) {}
  *
- * queryField(ArticleConnection, { resolve: ... })
+ * queryField(ArticleFeedConnection, { resolve: ... })
  * ```
  *
- * The subclass name becomes the GraphQL type name (it must end in
- * `Connection` — Relay identifies connections by that suffix). Constructing
- * an instance is optional sugar: `new ArticleConnection(payload)` just
+ * The identifier string names the GraphQL type — required positionally for
+ * extended connections, exactly like `Schema.Class`, because runtime class
+ * names get mangled by minifiers and are never consulted. Constructing an
+ * instance is optional sugar: `new ArticleFeedConnection(payload)` just
  * brands the payload object.
  */
 export type ConnectionClass<T> = ConnectionType<T> &
   (new (payload: ConnectionPayload<T>) => ConnectionPayload<T>);
 
-export const Connection = Object.assign(
-  /**
-   * `Connection(T)` — the canonical Cursor Connections shape, nothing more.
-   * `Connection(T, { fields })` — the spec permits additional connection
-   * fields; declare them with the same `fields` grammar as `Node.layer`,
-   * resolved against the `ConnectionPayload<T>` the field's resolver
-   * returned (bare schemas are payload-property pass-throughs). Use the
-   * result directly in a field position, or subclass it to name the type:
-   * `class ArticleConnection extends Connection(Article, {...}) {}`.
-   */
-  function Connection<T>(cls: SchemaClass<T>, config?: ConnectionConfig<T>): ConnectionClass<T> {
-    const nodeName = classIdentifier(cls);
-    class ConnectionBase {
-      constructor(payload: ConnectionPayload<T>) {
-        Object.assign(this, payload);
-      }
+/**
+ * `Connection(T)` — the canonical Cursor Connections shape under the
+ * zero-config `${Node}Connection` name (derived from the node class's
+ * identifier string; minification-safe).
+ *
+ * `Connection(T, identifier, { fields })` — a distinct, named connection
+ * type. The spec permits additional connection fields; declare them with
+ * the same `fields` grammar as `Node.layer`, resolved against the
+ * `ConnectionPayload<T>` the field's resolver returned (bare schemas are
+ * payload-property pass-throughs). Use the result directly in a field
+ * position, or subclass it:
+ * `class ArticleFeedConnection extends Connection(Article, "ArticleFeedConnection", {...}) {}`.
+ */
+function ConnectionFn<T>(cls: SchemaClass<T>): ConnectionClass<T>;
+function ConnectionFn<T>(
+  cls: SchemaClass<T>,
+  identifier: string,
+  config?: ConnectionConfig<T>,
+): ConnectionClass<T>;
+function ConnectionFn<T>(
+  cls: SchemaClass<T>,
+  identifier?: string,
+  config?: ConnectionConfig<T>,
+): ConnectionClass<T> {
+  const nodeName = classIdentifier(cls);
+  if (identifier !== undefined && !identifier.endsWith("Connection")) {
+    throw new Error(
+      `@y2k-network/afterglow: connection type "${identifier}" must end in "Connection" — Relay identifies connections by that suffix.`,
+    );
+  }
+  class ConnectionBase {
+    constructor(payload: ConnectionPayload<T>) {
+      Object.assign(this, payload);
     }
-    Object.defineProperty(ConnectionBase, CONNECTION_NODE_KEY, {
-      value: nodeName,
+  }
+  if (identifier !== undefined) {
+    Object.defineProperty(ConnectionBase, CONNECTION_NAME_KEY, {
+      value: identifier,
       enumerable: false,
     });
-    if (config?.fields !== undefined) {
-      Object.defineProperty(ConnectionBase, CONNECTION_EXTEND_KEY, {
-        value: config.fields,
-        enumerable: false,
-      });
-    }
-    return ConnectionBase as unknown as ConnectionClass<T>;
-  },
+  }
+  Object.defineProperty(ConnectionBase, CONNECTION_NODE_KEY, {
+    value: nodeName,
+    enumerable: false,
+  });
+  if (config?.fields !== undefined) {
+    Object.defineProperty(ConnectionBase, CONNECTION_EXTEND_KEY, {
+      value: config.fields,
+      enumerable: false,
+    });
+  }
+  return ConnectionBase as unknown as ConnectionClass<T>;
+}
+
+export const Connection = Object.assign(
+  ConnectionFn,
   {
     /**
      * Layer-form registration — the Layer-driven twin of the `Connection`
-     * call form. Use it to declare a connection (and its extension fields)
-     * as part of the SchemaLayer composition instead of at a reference
-     * site; extensions from all declaration sites accumulate.
+     * call form. Use it to declare a connection (and, with a positional
+     * identifier, a named extension) as part of the SchemaLayer composition
+     * instead of at a reference site; extensions from all declaration sites
+     * accumulate.
      */
-    layer<T>(cls: SchemaClass<T>, config?: ConnectionConfig<T>): Layer.Layer<never, never, never> {
-      const nodeName = classIdentifier(cls);
-      return Layer.effectDiscard(
-        Effect.sync(() => {
-          recordFragment(
-            makeConnectionFragment(
-              nodeName,
-              config?.fields as ConnectionExtension | undefined,
-            ),
-          );
-        }),
-      ) as Layer.Layer<never, never, never>;
-    },
+    layer: connectionLayer,
   },
 );
+
+function connectionLayer<T>(cls: SchemaClass<T>): Layer.Layer<never, never, never>;
+function connectionLayer<T>(
+  cls: SchemaClass<T>,
+  identifier: string,
+  config?: ConnectionConfig<T>,
+): Layer.Layer<never, never, never>;
+function connectionLayer<T>(
+  cls: SchemaClass<T>,
+  identifier?: string,
+  config?: ConnectionConfig<T>,
+): Layer.Layer<never, never, never> {
+  const nodeName = classIdentifier(cls);
+  return Layer.effectDiscard(
+    Effect.sync(() => {
+      recordFragment(
+        makeConnectionFragment(
+          nodeName,
+          config?.fields as ConnectionExtension | undefined,
+          identifier,
+        ),
+      );
+    }),
+  ) as Layer.Layer<never, never, never>;
+}
 
 export function toConnection<T>(
   rows: ReadonlyArray<T>,

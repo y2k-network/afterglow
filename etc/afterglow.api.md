@@ -39,12 +39,11 @@ export const buildSchema: <R>(schemaLayer: Layer.Layer<never, never, R>, options
 // @public (undocumented)
 export const catchDirective: GraphQLDirective;
 
-// Warning: (ae-forgotten-export) The symbol "ConnectionConfig" needs to be exported by the entry point index.d.ts
-// Warning: (ae-forgotten-export) The symbol "ConnectionClass" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "ConnectionFn" needs to be exported by the entry point index.d.ts
 //
 // @public (undocumented)
-export const Connection: (<T>(cls: SchemaClass<T>, config?: ConnectionConfig<T>) => ConnectionClass<T>) & {
-    layer<T>(cls: SchemaClass<T>, config?: ConnectionConfig<T>): Layer.Layer<never, never, never>;
+export const Connection: typeof ConnectionFn & {
+    layer: typeof connectionLayer;
 };
 
 // @public (undocumented)
@@ -742,9 +741,10 @@ export const waterfallDirective: GraphQLDirective;
 
 // Warnings were encountered during analysis:
 //
-// src/builder.ts:830:9 - (ae-forgotten-export) The symbol "FieldHelper" needs to be exported by the entry point index.d.ts
-// src/builder.ts:830:9 - (ae-forgotten-export) The symbol "NodeFieldOutput" needs to be exported by the entry point index.d.ts
-// src/builder.ts:1221:5 - (ae-forgotten-export) The symbol "GraphQLResolveInfo" needs to be exported by the entry point index.d.ts
+// src/builder.ts:823:9 - (ae-forgotten-export) The symbol "FieldHelper" needs to be exported by the entry point index.d.ts
+// src/builder.ts:823:9 - (ae-forgotten-export) The symbol "NodeFieldOutput" needs to be exported by the entry point index.d.ts
+// src/builder.ts:1109:5 - (ae-forgotten-export) The symbol "connectionLayer" needs to be exported by the entry point index.d.ts
+// src/builder.ts:1264:5 - (ae-forgotten-export) The symbol "GraphQLResolveInfo" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 
