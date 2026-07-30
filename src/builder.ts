@@ -196,7 +196,8 @@ export function resolve<TParent, S extends Schema.Top>(
 const readResolverFn = (
   v: unknown,
 ): ((parent: any) => unknown) | undefined => {
-  if (typeof v !== "object" || v === null) return undefined;
+  // Schemas are callable functions on effect ≥ beta.100 — accept both typeofs.
+  if ((typeof v !== "object" && typeof v !== "function") || v === null) return undefined;
   const fn = (v as Record<symbol, unknown>)[RESOLVER_FN_KEY];
   return typeof fn === "function" ? (fn as (p: any) => unknown) : undefined;
 };
@@ -295,42 +296,74 @@ const outputTypeToIR = (t: FieldOutputType | ConnectionType<unknown>): IROutputT
     if (frag !== undefined) recordFragment(frag);
     return { kind: "scalar", name: (t as { name: string }).name };
   }
-  // Schema.Class (constructor)
+  // Schema.Class (constructor). Plain schemas are ALSO functions on effect
+  // ≥ beta.100 (callable schemas) — those carry `ast` but no string
+  // `identifier` static, and fall through to the AST branch below.
   if (typeof t === "function") {
     const name = (t as { identifier?: unknown }).identifier;
-    if (typeof name !== "string") {
+    if (typeof name === "string") return { kind: "named", name };
+    if (!("ast" in (t as object))) {
       throw new Error(
         "@y2k-network/afterglow: cannot derive a GraphQL type name from this constructor — expected a Schema.Class.",
       );
     }
-    return { kind: "named", name };
   }
   // Schema.Top primitives — map common ones to GraphQL builtins
-  if (typeof t === "object" && t !== null && "ast" in (t as object)) {
-    const ast = (t as Schema.Top).ast;
-    switch (ast._tag) {
-      case "String":
-        return { kind: "scalar", name: "String" };
-      case "Number":
-        return { kind: "scalar", name: "Float" };
-      case "Boolean":
-        return { kind: "scalar", name: "Boolean" };
-      default: {
-        // Try to use the schema's identifier annotation (e.g. DateFromString
-        // standard scalars get `Date`/`DateTime` identifiers from us).
-        const id = ast.annotations?.identifier;
-        if (typeof id === "string") {
-          // Standard scalars' identifiers match registered scalar names
-          // (DateTime, JSON, URL, etc. — see standard-scalars.ts).
-          return { kind: "scalar", name: id };
-        }
-        throw new Error(
-          `@y2k-network/afterglow: cannot map Schema AST "${ast._tag}" to a GraphQL output type without an \`identifier\` annotation.`,
-        );
-      }
-    }
+  if ((typeof t === "object" || typeof t === "function") && t !== null && "ast" in (t as object)) {
+    return astToOutputIR((t as Schema.Top).ast);
   }
   throw new Error("@y2k-network/afterglow: unsupported field output type");
+};
+
+type OutputAst = {
+  readonly _tag: string;
+  readonly annotations?: { readonly identifier?: unknown };
+  readonly types?: ReadonlyArray<OutputAst>;
+};
+
+const astToOutputIR = (ast: OutputAst): IROutputType => {
+  switch (ast._tag) {
+    case "String":
+      return { kind: "scalar", name: "String" };
+    case "Number":
+      return { kind: "scalar", name: "Float" };
+    case "Boolean":
+      return { kind: "scalar", name: "Boolean" };
+    case "Union": {
+      // NullOr(T) → Union [T, Null]. Wire nullability is the default anyway;
+      // the null-on-success semantic is handled by `nullOnSuccess` (which
+      // suppresses `@semanticNonNull`). Here only the base type matters.
+      const members = ast.types ?? [];
+      const nonNull = members.filter((m) => m._tag !== "Null");
+      if (nonNull.length === 1 && nonNull.length < members.length) {
+        return astToOutputIR(nonNull[0]!);
+      }
+      break;
+    }
+  }
+  // Try to use the schema's identifier annotation (e.g. DateFromString
+  // standard scalars get `Date`/`DateTime` identifiers from us).
+  const id = ast.annotations?.identifier;
+  if (typeof id === "string") {
+    // Standard scalars' identifiers match registered scalar names
+    // (DateTime, JSON, URL, etc. — see standard-scalars.ts).
+    return { kind: "scalar", name: id };
+  }
+  throw new Error(
+    `@y2k-network/afterglow: cannot map Schema AST "${ast._tag}" to a GraphQL output type without an \`identifier\` annotation.`,
+  );
+};
+
+// NullOr(T) at the top level of a field's schema means "null is a valid
+// success value" — the README's documented signal for suppressing the
+// `@semanticNonNull` auto-emit.
+const nullOnSuccess = (v: unknown): boolean => {
+  if ((typeof v !== "object" && typeof v !== "function") || v === null) return false;
+  if (!("ast" in (v as object))) return false;
+  const ast = (v as Schema.Top).ast as OutputAst;
+  if (ast._tag !== "Union") return false;
+  const members = ast.types ?? [];
+  return members.some((m) => m._tag === "Null");
 };
 
 // ---------------------------------------------------------------------------
@@ -376,7 +409,7 @@ const compileFieldEntry = (
     return {
       type: outputTypeToIR(rawF.type),
       nonNull: rawF.nonNull,
-      semanticNonNull: rawF.semanticNonNull,
+      semanticNonNull: rawF.semanticNonNull ?? (nullOnSuccess(rawF.type) ? false : undefined),
       description: rawF.description,
       args: argsToIR(rawF.args),
       resolve: makeResolveFromUserFn(fieldName, parentName, rawF.resolve),
@@ -403,12 +436,16 @@ const compileFieldEntry = (
   }
   // Case 3: Schema.Top — either a bare pass-through (e.g. `title: Schema.String`)
   // or a pipe-attached resolver (`title: Schema.String.pipe(GraphQL.resolve((u) => u.title))`).
-  if (typeof raw === "object" && raw !== null && "ast" in (raw as object)) {
+  // Schemas are callable functions on effect ≥ beta.100, so accept both
+  // typeofs. A bare Schema.Class also lands here and resolves to its named
+  // type via `outputTypeToIR`'s identifier-first branch.
+  if ((typeof raw === "object" || typeof raw === "function") && raw !== null && "ast" in (raw as object)) {
     const fn = readResolverFn(raw);
     if (fn !== undefined) {
       return {
         type: outputTypeToIR(raw as Schema.Top),
         nonNull: false,
+        semanticNonNull: nullOnSuccess(raw) ? false : undefined,
         args: {},
         resolve: makeResolveFromUserFn(fieldName, parentName, (p, _a, _i) => fn(p)),
         invocation: {
@@ -423,6 +460,7 @@ const compileFieldEntry = (
     return {
       type: outputTypeToIR(raw as Schema.Top),
       nonNull: false,
+      semanticNonNull: nullOnSuccess(raw) ? false : undefined,
       args: {},
       projection: { _tag: "Property", key: fieldName },
       resolve: defaultPassthroughResolve(fieldName),

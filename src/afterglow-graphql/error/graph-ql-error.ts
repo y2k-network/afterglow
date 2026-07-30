@@ -235,7 +235,7 @@ export class GraphQLSyntaxError extends SyntaxTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const LocatedTaggedBase = Data.TaggedError('GraphQLLocatedError')<NormalizedFields>;
@@ -249,7 +249,7 @@ export class GraphQLLocatedError extends LocatedTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const ValidationTaggedBase = Data.TaggedError('GraphQLValidationError')<
@@ -285,7 +285,7 @@ export class GraphQLValidationError extends ValidationTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const ValidationLimitTaggedBase = Data.TaggedError('GraphQLValidationLimitError')<
@@ -307,7 +307,7 @@ export class GraphQLValidationLimitError extends ValidationLimitTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const OperationTaggedBase = Data.TaggedError('GraphQLOperationResolutionError')<
@@ -339,7 +339,7 @@ export class GraphQLOperationResolutionError extends OperationTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const RootTypeTaggedBase = Data.TaggedError('GraphQLRootTypeError')<
@@ -362,7 +362,7 @@ export class GraphQLRootTypeError extends RootTypeTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const SubscriptionTaggedBase = Data.TaggedError('GraphQLSubscriptionError')<
@@ -382,7 +382,7 @@ export class GraphQLSubscriptionError extends SubscriptionTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const RuntimeTypeTaggedBase = Data.TaggedError('GraphQLRuntimeTypeError')<
@@ -402,7 +402,7 @@ export class GraphQLRuntimeTypeError extends RuntimeTypeTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const FieldCompletionTaggedBase = Data.TaggedError('GraphQLFieldCompletionError')<
@@ -425,7 +425,7 @@ export class GraphQLFieldCompletionError extends FieldCompletionTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const VariableCoercionTaggedBase = Data.TaggedError('GraphQLVariableCoercionError')<
@@ -452,7 +452,7 @@ export class GraphQLVariableCoercionError extends VariableCoercionTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const VariableCoercionLimitTaggedBase = Data.TaggedError('GraphQLVariableCoercionLimitError')<NormalizedFields>;
@@ -469,7 +469,7 @@ export class GraphQLVariableCoercionLimitError extends VariableCoercionLimitTagg
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const ArgumentCoercionTaggedBase = Data.TaggedError('GraphQLArgumentCoercionError')<
@@ -496,7 +496,7 @@ export class GraphQLArgumentCoercionError extends ArgumentCoercionTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const InputCoercionTaggedBase = Data.TaggedError('GraphQLInputCoercionError')<
@@ -522,7 +522,7 @@ export class GraphQLInputCoercionError extends InputCoercionTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const SchemaConstructionTaggedBase = Data.TaggedError('GraphQLSchemaConstructionError')<
@@ -545,7 +545,7 @@ export class GraphQLSchemaConstructionError extends SchemaConstructionTaggedBase
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const SchemaValidationTaggedBase = Data.TaggedError('GraphQLSchemaValidationError')<
@@ -561,7 +561,7 @@ export class GraphQLSchemaValidationError extends SchemaValidationTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const ScalarCoercionTaggedBase = Data.TaggedError('GraphQLScalarCoercionError')<
@@ -585,7 +585,7 @@ export class GraphQLScalarCoercionError extends ScalarCoercionTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 const NameTaggedBase = Data.TaggedError('GraphQLNameError')<
@@ -609,7 +609,7 @@ export class GraphQLNameError extends NameTaggedBase {
 
   get [Symbol.toStringTag](): string { return 'GraphQLError'; }
   override toString(): string { return graphQLErrorToString(this); }
-  toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
+  override toJSON(): GraphQLFormattedError { return graphQLErrorToJSON(this); }
 }
 
 export type GraphQLError =
