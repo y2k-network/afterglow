@@ -583,7 +583,13 @@ test("smoke: missing-fragment error message names the type and the fix", () => {
   // Easier: register Item but not its connection, then add a queryField that
   // names a "FooConnection" via a manual Schema.Class trick. Cleanest test:
   // make a node that references an unregistered named type via a pass-through.
-  class Ghost extends Schema.Class<Ghost>("Ghost")({ id: Schema.String }) {}
+  // Ghost carries a field that cannot lower to GraphQL (Declaration AST, no
+  // identifier annotation), so the plain-object auto-registration skips it —
+  // a clean class would auto-register and build successfully instead.
+  class Ghost extends Schema.Class<Ghost>("Ghost")({
+    id: Schema.String,
+    seenAt: Schema.DateFromString,
+  }) {}
   // Don't register Ghost. Reference it from a field type in Item to trigger
   // the missing-type error.
   const BadNode = Node.layer(Item)({
@@ -865,6 +871,156 @@ test("smoke: bare arg schemas lower to non-null; optional/NullOr stay nullable",
   });
   expect(ok.errors).toBeUndefined();
   expect(ok.data).toEqual({ greet: "hi|-|-" });
+});
+
+test("smoke: plain-object lists, output enums, Int lowering, extendable connections", async () => {
+  class ArticleTag extends Schema.Class<ArticleTag>("ArticleTag")({
+    label: Schema.String,
+    weight: Schema.Int,
+  }) {}
+
+  const ArticleStatus = Schema.Literals(["DRAFT", "PUBLISHED", "ARCHIVED"]).annotate({
+    identifier: "ArticleStatus",
+  });
+
+  class ArticleT extends Schema.Class<ArticleT>("ArticleT")({
+    id: Schema.String,
+    wordCount: Schema.Int,
+    status: ArticleStatus,
+    tags: Schema.Array(ArticleTag),
+  }) {}
+
+  const article = new ArticleT({
+    id: "a1",
+    wordCount: 1200,
+    status: "PUBLISHED",
+    tags: [new ArticleTag({ label: "typography", weight: 3 })],
+  });
+
+  const ArticleNode = Node.layer(ArticleT)({
+    fields: () => ({
+      wordCount: Schema.Int,
+      status: ArticleStatus,
+      tags: Schema.Array(ArticleTag),
+    }),
+    load: () => Effect.succeed(article),
+  });
+
+  // Per-instance connection extension: the subclass IS its own GraphQL type
+  // (named after the class), reusable in any field position. Bare
+  // `Connection(T)` elsewhere keeps the canonical zero-config type.
+  class ArticleFeedConnection extends Connection(ArticleT, {
+    fields: (f) => ({ totalCount: f(Schema.Int) }),
+  }) {}
+
+  const QueryLayer = Query.layer({
+    articles: queryField(ArticleFeedConnection, {
+      resolve: () =>
+        Effect.succeed(
+          toConnection([article], {
+            cursor: (a) => a.id,
+            hasNextPage: false,
+            totalCount: 42,
+          }),
+        ),
+    }),
+    // Same node through the bare canonical connection — coexists with the
+    // extended subclass and shares the ArticleTEdge type.
+    recentArticles: queryField(Connection(ArticleT), {
+      resolve: () =>
+        Effect.succeed(toConnection([article], { cursor: (a) => a.id, hasNextPage: false })),
+    }),
+  });
+
+  const SchemaLayer = Layer.mergeAll(ArticleNode, QueryLayer);
+  const schema = buildSchema(SchemaLayer);
+  const sdl = printSchema(schema);
+
+  // Plain (non-Node) object type auto-registered from the Schema.Class.
+  expect(sdl).toContain("type ArticleTag {");
+  // List output with non-null items — Array(T) → [T!].
+  expect(sdl).toContain("tags: [ArticleTag!]");
+  // Literal union with identifier annotation → enum in output position.
+  expect(sdl).toContain("status: ArticleStatus");
+  expect(sdl).toMatch(/enum ArticleStatus \{\s*DRAFT\s*PUBLISHED\s*ARCHIVED\s*\}/);
+  // Int-checked schema → Int, not Float (on the node AND the plain object).
+  expect(sdl).toContain("wordCount: Int");
+  expect(sdl).toContain("weight: Int");
+  // The subclass is its own type, named after the class, with the extension
+  // field; the bare connection stays canonical. Both share one Edge type.
+  expect(sdl).toMatch(
+    /type ArticleFeedConnection \{\s*edges: \[ArticleTEdge\]!\s*pageInfo: PageInfo!\s*totalCount: Int\s*\}/,
+  );
+  expect(sdl).toMatch(/type ArticleTConnection \{\s*edges: \[ArticleTEdge\]!\s*pageInfo: PageInfo!\s*\}/);
+  expect(sdl).toContain("articles(");
+  expect(sdl).toContain("recentArticles(");
+
+  const result = await execute({
+    schema,
+    document: parse(
+      `{ articles(first: 1) { totalCount edges { node { wordCount status tags { label weight } } } } }`,
+    ),
+  });
+  expect(result.errors).toBeUndefined();
+  expect(result.data).toEqual({
+    articles: {
+      totalCount: 42,
+      edges: [
+        {
+          node: {
+            wordCount: 1200,
+            status: "PUBLISHED",
+            tags: [{ label: "typography", weight: 3 }],
+          },
+        },
+      ],
+    },
+  });
+});
+
+test("smoke: bare connections stay canonical — no extension fields; reserved names rejected", () => {
+  class NoteT extends Schema.Class<NoteT>("NoteT")({
+    id: Schema.String,
+    body: Schema.String,
+  }) {}
+
+  const NoteNode = Node.layer(NoteT)({
+    fields: () => ({ body: Schema.String }),
+    load: () => Effect.succeed(null),
+  });
+
+  const QueryLayer = Query.layer({
+    notes: queryField(Connection(NoteT), {
+      resolve: () =>
+        Effect.succeed(toConnection([], { cursor: () => "", hasNextPage: false })),
+    }),
+  });
+
+  const schema = buildSchema(Layer.mergeAll(NoteNode, QueryLayer));
+  const sdl = printSchema(schema);
+  expect(sdl).toMatch(/type NoteTConnection \{\s*edges: \[NoteTEdge\]!\s*pageInfo: PageInfo!\s*\}/);
+  expect(sdl).not.toContain("totalCount");
+
+  // Layer-form extension: Connection.layer(T, { fields }) composes into the
+  // SchemaLayer; a bare Connection(T) reference elsewhere keeps it.
+  const ExtensionLayer = Connection.layer(NoteT, {
+    fields: (f) => ({ totalCount: f(Schema.Int) }),
+  });
+  const extended = buildSchema(Layer.mergeAll(NoteNode, QueryLayer, ExtensionLayer));
+  expect(printSchema(extended)).toMatch(
+    /type NoteTConnection \{\s*edges: \[NoteTEdge\]!\s*pageInfo: PageInfo!\s*totalCount: Int\s*\}/,
+  );
+
+  // Canonical shape is not overridable.
+  const BadQuery = Query.layer({
+    bad: queryField(
+      Connection(NoteT, { fields: (f) => ({ edges: f(Schema.String) }) }),
+      { resolve: () => Effect.succeed(toConnection([], { cursor: () => "", hasNextPage: false })) },
+    ),
+  });
+  expect(() => buildSchema(Layer.mergeAll(NoteNode, BadQuery))).toThrow(
+    /part of the canonical Relay connection shape/,
+  );
 });
 
 // Avoid "no test" unused-imports

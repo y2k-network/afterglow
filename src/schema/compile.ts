@@ -122,6 +122,25 @@ export function lower(ir: IR, options: LowerOptions = {}): GraphQLSchema {
     registry.set(frag.name, scalar);
   }
 
+  // Enums from output-position literal unions. The input side
+  // (schema/bridge.ts literalUnionToEnum) checks the registry before
+  // constructing, so an enum used as both a field type and an arg type
+  // resolves to one GraphQLEnumType instance.
+  for (const [name, frag] of ir.enums) {
+    const cached = registry.get(name);
+    if (cached) {
+      if (!(cached instanceof GraphQLEnumType)) {
+        throw new Error(
+          `@y2k-network/afterglow: type registry name collision for "${name}" (existing type is not an enum)`,
+        );
+      }
+      continue;
+    }
+    const values: Record<string, { value: string }> = {};
+    for (const v of frag.values) values[v] = { value: v };
+    registry.set(name, new GraphQLEnumType({ name, values, description: frag.description }));
+  }
+
   const nodeInterface: GraphQLInterfaceType | null = hasNodes
     ? buildNodeInterface((obj) => {
         if (typeof obj === "object" && obj !== null) {
@@ -147,6 +166,10 @@ export function lower(ir: IR, options: LowerOptions = {}): GraphQLSchema {
     registry.set(name, obj);
   }
   for (const [name, frag] of ir.objects) {
+    // A class registered via Node.layer may also have been auto-registered
+    // as a plain-object candidate when referenced in output position — the
+    // node fragment (with Node interface + global id) wins.
+    if (ir.nodes.has(name)) continue;
     const obj = new GraphQLObjectType({
       name,
       description: frag.description,
@@ -187,10 +210,19 @@ export function lower(ir: IR, options: LowerOptions = {}): GraphQLSchema {
         "@y2k-network/afterglow: internal — PageInfo not initialized despite connection types being present",
       );
     }
+    const extraFields = conn.extraFields;
+    // Connection types over the same node (canonical + extended subclasses)
+    // share one Edge type — reuse the registered instance so every name in
+    // the schema maps to exactly one type object.
+    const registeredEdge = registry.get(conn.edgeName);
     const { connection, edge } = buildConnectionTypes(
-      conn.nodeTypeName,
+      { connectionName: conn.name, edgeName: conn.edgeName },
       nodeType,
       pageInfoType,
+      extraFields !== undefined && Object.keys(extraFields).length > 0
+        ? () => buildObjectFields(conn.name, extraFields, registry)
+        : undefined,
+      registeredEdge instanceof GraphQLObjectType ? registeredEdge : undefined,
     );
     registry.set(connection.name, connection);
     registry.set(edge.name, edge);

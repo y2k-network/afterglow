@@ -25,6 +25,7 @@ import {
   type Context,
 } from "effect";
 import { decodeGlobalId, encodeGlobalId } from "./relay/core.ts";
+import { hasIntCheck } from "./schema/bridge.ts";
 import type { GraphQLResolveInfo } from "./afterglow-graphql/type/definition.ts";
 import {
   connectionEdge as connectionEdgeFn,
@@ -32,9 +33,11 @@ import {
 } from "./relay/mutations.ts";
 import type {
   IRConnectionFragment,
+  IREnumFragment,
   IRFieldDef,
   IRMutationFragment,
   IRNodeFragment,
+  IRObjectFragment,
   IROutputType,
   IRQueryFragment,
   IRScalarFragment,
@@ -280,23 +283,56 @@ const readRawField = (
 
 // ---------------------------------------------------------------------------
 // Output-type compilation: FieldOutputType → IROutputType
+//
+// Two levels, one recursion:
+//   - `outputTypeToIR` walks SCHEMA VALUES. Structural wrappers — NullOr /
+//     UndefinedOr / optional / Array — recurse on the inner *schema*, never
+//     its AST, so a Schema.Class anywhere in the composition keeps its
+//     constructor identity and auto-registers as a plain object type.
+//   - `astToOutputIR` maps leaf ASTs (primitives, literal-union enums,
+//     identifier-annotated declarations). It is the floor of the recursion,
+//     not a parallel pathway.
 // ---------------------------------------------------------------------------
+
+const isSchemaLike = (v: unknown): v is Schema.Top =>
+  (typeof v === "object" || typeof v === "function") && v !== null && "ast" in (v as object);
+
+const isNullishMember = (m: Schema.Top): boolean =>
+  m.ast._tag === "Null" || m.ast._tag === "Undefined";
 
 const outputTypeToIR = (t: FieldOutputType | ConnectionType<unknown>): IROutputType => {
   // ID marker
   if (t === ID) return { kind: "scalar", name: "ID" };
-  // ConnectionType (carries its node ctor name)
-  if (typeof t === "object" && t !== null && CONNECTION_NODE_KEY in (t as object)) {
+  // ConnectionType (carries its node ctor name, plus any consumer-declared
+  // extension fields from `Connection(T, { fields })`). Both the base class
+  // returned by `Connection(...)` and user subclasses of it land here —
+  // the symbols are own-properties of the base and inherited by subclasses.
+  if (
+    (typeof t === "object" || typeof t === "function") &&
+    t !== null &&
+    CONNECTION_NODE_KEY in (t as object)
+  ) {
     const nodeName = (t as unknown as Record<symbol, unknown>)[CONNECTION_NODE_KEY] as string;
+    // A subclass (`class ArticleConnection extends Connection(Article, ...)`)
+    // names the GraphQL type after itself; the bare base keeps the
+    // zero-config `${Node}Connection` name. Distinguished by symbol
+    // ownership: the base owns the marker, subclasses only inherit it.
+    const declaredName =
+      typeof t === "function" && !Object.hasOwn(t, CONNECTION_NODE_KEY) && t.name !== ""
+        ? t.name
+        : undefined;
+    if (declaredName !== undefined && !declaredName.endsWith("Connection")) {
+      throw new Error(
+        `@y2k-network/afterglow: connection class "${declaredName}" must end in "Connection" — Relay identifies connections by that suffix.`,
+      );
+    }
+    const extend = (t as unknown as Record<symbol, unknown>)[CONNECTION_EXTEND_KEY] as
+      | ConnectionExtension
+      | undefined;
     // Auto-register the connection IR fragment so users don't need Connection.layer().
-    const connFrag: IRConnectionFragment = {
-      kind: "connection",
-      name: `${nodeName}Connection`,
-      edgeName: `${nodeName}Edge`,
-      nodeTypeName: nodeName,
-    };
-    recordFragment(connFrag);
-    return { kind: "named", name: `${nodeName}Connection` };
+    const fragment = makeConnectionFragment(nodeName, extend, declaredName);
+    recordFragment(fragment);
+    return { kind: "named", name: fragment.name };
   }
   // Scalar def from Scalar(...) — register on demand
   if (typeof t === "object" && t !== null && "name" in (t as object) && "schema" in (t as object)) {
@@ -308,19 +344,53 @@ const outputTypeToIR = (t: FieldOutputType | ConnectionType<unknown>): IROutputT
   }
   // Schema.Class (constructor). Plain schemas are ALSO functions on effect
   // ≥ beta.100 (callable schemas) — those carry `ast` but no string
-  // `identifier` static, and fall through to the AST branch below.
+  // `identifier` static, and fall through to the schema branch below.
   if (typeof t === "function") {
     const name = (t as { identifier?: unknown }).identifier;
-    if (typeof name === "string") return { kind: "named", name };
+    if (typeof name === "string") {
+      // Auto-register a plain object type derived from the class fields —
+      // makes non-Node Schema.Classes usable in output position without a
+      // layer call. When the class is ALSO registered via Node.layer, the
+      // node fragment wins at compile time (see compile.ts objects pass).
+      registerObjectCandidate(name, t);
+      return { kind: "named", name };
+    }
     if (!("ast" in (t as object))) {
       throw new Error(
         "@y2k-network/afterglow: cannot derive a GraphQL type name from this constructor — expected a Schema.Class.",
       );
     }
   }
-  // Schema.Top primitives — map common ones to GraphQL builtins
-  if ((typeof t === "object" || typeof t === "function") && t !== null && "ast" in (t as object)) {
-    return astToOutputIR((t as Schema.Top).ast);
+  if (isSchemaLike(t)) {
+    const ast = t.ast as OutputAst;
+    // Schema.optional(X) — unwrap the wrapper schema. Optionality is a
+    // presence concern; the wire type is the inner type's.
+    if (ast.context?.isOptional === true && "schema" in (t as object)) {
+      return outputTypeToIR((t as unknown as { schema: FieldOutputType }).schema);
+    }
+    // Union with schema-level members: NullOr(X) / UndefinedOr(X) unwrap to
+    // X *as a schema*, so classes inside keep their constructor identity.
+    // Anything else (literal unions → enums) falls through to the leaf AST
+    // mapper below.
+    if (ast._tag === "Union" && "members" in (t as object)) {
+      const members = (t as unknown as { members: ReadonlyArray<Schema.Top> }).members;
+      const nonNullish = members.filter((m) => !isNullishMember(m));
+      if (nonNullish.length === 1 && nonNullish.length < members.length) {
+        return outputTypeToIR(nonNullish[0] as FieldOutputType);
+      }
+    }
+    // Schema.Array(X) — recurse on the element schema (`.value`). Item
+    // nullability follows the element: Array(T) → [T!], Array(NullOr(T)) →
+    // [T]. Wire nullability of the list itself stays on the field.
+    if (ast._tag === "Arrays" && "value" in (t as object)) {
+      const element = (t as unknown as { value: FieldOutputType }).value;
+      return {
+        kind: "list",
+        inner: outputTypeToIR(element),
+        itemNonNull: !nullOnSuccess(element),
+      };
+    }
+    return astToOutputIR(ast);
   }
   throw new Error("@y2k-network/afterglow: unsupported field output type");
 };
@@ -328,7 +398,11 @@ const outputTypeToIR = (t: FieldOutputType | ConnectionType<unknown>): IROutputT
 type OutputAst = {
   readonly _tag: string;
   readonly annotations?: { readonly identifier?: unknown };
+  readonly context?: { readonly isOptional?: boolean };
   readonly types?: ReadonlyArray<OutputAst>;
+  readonly literal?: unknown;
+  readonly elements?: ReadonlyArray<OutputAst>;
+  readonly rest?: ReadonlyArray<OutputAst>;
 };
 
 const astToOutputIR = (ast: OutputAst): IROutputType => {
@@ -336,7 +410,9 @@ const astToOutputIR = (ast: OutputAst): IROutputType => {
     case "String":
       return { kind: "scalar", name: "String" };
     case "Number":
-      return { kind: "scalar", name: "Float" };
+      // Int-checked numbers (Schema.Int) are GraphQL Int — 32-bit signed
+      // per spec; anything larger belongs on the BigInt standard scalar.
+      return { kind: "scalar", name: hasIntCheck(ast as never) ? "Int" : "Float" };
     case "Boolean":
       return { kind: "scalar", name: "Boolean" };
     case "Union": {
@@ -344,11 +420,54 @@ const astToOutputIR = (ast: OutputAst): IROutputType => {
       // the null-on-success semantic is handled by `nullOnSuccess` (which
       // suppresses `@semanticNonNull`). Here only the base type matters.
       const members = ast.types ?? [];
-      const nonNull = members.filter((m) => m._tag !== "Null");
+      const nonNull = members.filter((m) => m._tag !== "Null" && m._tag !== "Undefined");
       if (nonNull.length === 1 && nonNull.length < members.length) {
         return astToOutputIR(nonNull[0]!);
       }
+      // Pure string-literal union → GraphQL enum, matching the input-side
+      // lowering (schema/bridge.ts). Both sides dedupe through the shared
+      // type registry, so the same schema as arg and field yields one enum.
+      if (
+        nonNull.length > 0 &&
+        nonNull.every((m) => m._tag === "Literal" && typeof m.literal === "string")
+      ) {
+        const id = ast.annotations?.identifier;
+        if (typeof id !== "string") {
+          throw new Error(
+            `@y2k-network/afterglow: string-literal union must carry an identifier annotation (use schema.annotate({ identifier: "MyEnum" })) so it has a stable GraphQL name. Members: ${nonNull
+              .map((m) => JSON.stringify(m.literal))
+              .join(", ")}`,
+          );
+        }
+        const enumFrag: IREnumFragment = {
+          kind: "enum",
+          name: id,
+          values: nonNull.map((m) => m.literal as string),
+        };
+        recordFragment(enumFrag);
+        return { kind: "named", name: id };
+      }
       break;
+    }
+    case "Arrays": {
+      // AST-level fallback only — the schema-level walk in `outputTypeToIR`
+      // is the primary array path (it retains constructor identity for
+      // auto-registration). This branch serves rebuilt schemas that reach
+      // the leaf mapper as bare ASTs; class elements resolve by name and
+      // must be registered elsewhere.
+      const element = (ast.rest && ast.rest[0]) ?? (ast.elements && ast.elements[0]);
+      if (!element) {
+        throw new Error(
+          "@y2k-network/afterglow: empty array schema cannot be mapped to a GraphQL list type",
+        );
+      }
+      const itemNullable =
+        element._tag === "Union" && (element.types ?? []).some((m) => m._tag === "Null");
+      return {
+        kind: "list",
+        inner: astToOutputIR(element),
+        itemNonNull: !itemNullable,
+      };
     }
   }
   // Try to use the schema's identifier annotation (e.g. DateFromString
@@ -362,6 +481,38 @@ const astToOutputIR = (ast: OutputAst): IROutputType => {
   throw new Error(
     `@y2k-network/afterglow: cannot map Schema AST "${ast._tag}" to a GraphQL output type without an \`identifier\` annotation.`,
   );
+};
+
+/**
+ * Auto-registration of plain (non-Node) object types. A Schema.Class used
+ * in output position contributes an `IRObjectFragment` derived from its
+ * static `fields` — every field a property pass-through, lowered through
+ * `compileFieldEntry` like any `fields:` block entry. The in-progress set
+ * guards mutually recursive classes (A has a B field, B has an A field).
+ */
+const objectRegistrationInProgress = new Set<string>();
+
+const registerObjectCandidate = (name: string, cls: unknown): void => {
+  if (objectRegistrationInProgress.has(name)) return;
+  const classFields = (cls as { fields?: Record<string, Schema.Top> }).fields;
+  if (classFields === undefined) return;
+  objectRegistrationInProgress.add(name);
+  try {
+    const fields: Record<string, IRFieldDef> = {};
+    for (const [fname, fschema] of Object.entries(classFields)) {
+      fields[fname] = compileFieldEntry(fname, name, fschema);
+    }
+    const fragment: IRObjectFragment = { kind: "object", name, fields };
+    recordFragment(fragment);
+  } catch {
+    // A field didn't lower (e.g. a Declaration-AST schema the class maps
+    // through a curated Node.layer `fields:` callback instead). Skip the
+    // candidate: if the class is registered another way (Node.layer), that
+    // fragment serves the name; if not, compile-time lowering throws the
+    // actionable missing-type error naming the type and the fix.
+  } finally {
+    objectRegistrationInProgress.delete(name);
+  }
 };
 
 // NullOr(T) at the top level of a field's schema means "null is a valid
@@ -624,16 +775,18 @@ type NodeFieldOutput<T> =
  * and without (just a type, default property-name passthrough).
  */
 export interface FieldHelper<T> {
-  // Connection overload — pagination args injected automatically.
-  <Type, R = never>(
+  // Connection overload — pagination args injected automatically and merged
+  // with any declared filter args (declared args win on name collision).
+  <Type, R = never, A extends ArgDefs | undefined = undefined>(
     type: ConnectionType<Type>,
     options: {
       readonly nonNull?: boolean;
       readonly semanticNonNull?: boolean;
       readonly description?: string;
+      readonly args?: A;
       readonly resolve: (
         parent: T,
-        args: PaginationArgs,
+        args: (A extends ArgDefs ? ArgsShape<A> : {}) & PaginationArgs,
       ) => Effect.Effect<ConnectionPayload<Type>, unknown, R> | ConnectionPayload<Type>;
     },
   ): FieldDef<T, R>;
@@ -818,26 +971,121 @@ export const Viewer = {
 // ---------------------------------------------------------------------------
 
 const CONNECTION_NODE_KEY = Symbol("v2/connection-node-name");
+const CONNECTION_EXTEND_KEY = Symbol("v2/connection-extend");
+
+/**
+ * The `fields:` callback of a connection extension — same grammar as
+ * `Node.layer` / `Viewer.layer` fields, with the resolver parent bound to
+ * the `ConnectionPayload<T>` the field's resolver returned.
+ */
+type ConnectionExtension = (f: FieldHelper<never>) => Record<string, unknown>;
+
+interface ConnectionConfig<T> {
+  readonly fields: (
+    f: FieldHelper<ConnectionPayload<T>>,
+  ) => Record<string, NodeFieldOutput<ConnectionPayload<T>>>;
+}
+
+/**
+ * Build the connection IR fragment, compiling any consumer-declared
+ * extension fields. Runs inside the active build so transitive types the
+ * extension references register through the same side channel. The
+ * canonical Cursor Connections shape is never overridable — `edges` and
+ * `pageInfo` are rejected here, at declaration time.
+ */
+const makeConnectionFragment = (
+  nodeName: string,
+  extend: ConnectionExtension | undefined,
+  declaredName?: string,
+): IRConnectionFragment => {
+  const connectionName = declaredName ?? `${nodeName}Connection`;
+  let extraFields: Record<string, IRFieldDef> | undefined;
+  if (extend !== undefined) {
+    extraFields = {};
+    for (const [fname, fdef] of Object.entries(extend(field as unknown as FieldHelper<never>))) {
+      if (fname === "edges" || fname === "pageInfo") {
+        throw new Error(
+          `@y2k-network/afterglow: "${fname}" is part of the canonical Relay connection shape and cannot be overridden on ${connectionName}. Pick a different field name.`,
+        );
+      }
+      extraFields[fname] = compileFieldEntry(fname, connectionName, fdef);
+    }
+  }
+  return {
+    kind: "connection",
+    name: connectionName,
+    edgeName: `${nodeName}Edge`,
+    nodeTypeName: nodeName,
+    ...(extraFields !== undefined ? { extraFields } : {}),
+  };
+};
+
+/**
+ * What `Connection(T, config?)` returns: a ConnectionType marker that is
+ * ALSO a subclassable payload class, so the effect-native class idiom works:
+ *
+ * ```ts
+ * class ArticleConnection extends GraphQL.Connection(Article, {
+ *   fields: (f) => ({ totalCount: f(Schema.Int) }),
+ * }) {}
+ *
+ * queryField(ArticleConnection, { resolve: ... })
+ * ```
+ *
+ * The subclass name becomes the GraphQL type name (it must end in
+ * `Connection` — Relay identifies connections by that suffix). Constructing
+ * an instance is optional sugar: `new ArticleConnection(payload)` just
+ * brands the payload object.
+ */
+export type ConnectionClass<T> = ConnectionType<T> &
+  (new (payload: ConnectionPayload<T>) => ConnectionPayload<T>);
 
 export const Connection = Object.assign(
-  function Connection<T>(cls: SchemaClass<T>): ConnectionType<T> {
-    const name = classIdentifier(cls);
-    const out = Object.create(null) as Record<symbol, unknown>;
-    out[CONNECTION_NODE_KEY] = name;
-    return out as unknown as ConnectionType<T>;
+  /**
+   * `Connection(T)` — the canonical Cursor Connections shape, nothing more.
+   * `Connection(T, { fields })` — the spec permits additional connection
+   * fields; declare them with the same `fields` grammar as `Node.layer`,
+   * resolved against the `ConnectionPayload<T>` the field's resolver
+   * returned (bare schemas are payload-property pass-throughs). Use the
+   * result directly in a field position, or subclass it to name the type:
+   * `class ArticleConnection extends Connection(Article, {...}) {}`.
+   */
+  function Connection<T>(cls: SchemaClass<T>, config?: ConnectionConfig<T>): ConnectionClass<T> {
+    const nodeName = classIdentifier(cls);
+    class ConnectionBase {
+      constructor(payload: ConnectionPayload<T>) {
+        Object.assign(this, payload);
+      }
+    }
+    Object.defineProperty(ConnectionBase, CONNECTION_NODE_KEY, {
+      value: nodeName,
+      enumerable: false,
+    });
+    if (config?.fields !== undefined) {
+      Object.defineProperty(ConnectionBase, CONNECTION_EXTEND_KEY, {
+        value: config.fields,
+        enumerable: false,
+      });
+    }
+    return ConnectionBase as unknown as ConnectionClass<T>;
   },
   {
-    layer<T>(cls: SchemaClass<T>): Layer.Layer<never, never, never> {
+    /**
+     * Layer-form registration — the Layer-driven twin of `Connection(T,
+     * config)`. Use it to declare a connection (and its extension fields)
+     * as part of the SchemaLayer composition instead of at a reference
+     * site; extensions from all declaration sites accumulate.
+     */
+    layer<T>(cls: SchemaClass<T>, config?: ConnectionConfig<T>): Layer.Layer<never, never, never> {
       const nodeName = classIdentifier(cls);
       return Layer.effectDiscard(
         Effect.sync(() => {
-          const fragment: IRConnectionFragment = {
-            kind: "connection",
-            name: `${nodeName}Connection`,
-            edgeName: `${nodeName}Edge`,
-            nodeTypeName: nodeName,
-          };
-          recordFragment(fragment);
+          recordFragment(
+            makeConnectionFragment(
+              nodeName,
+              config?.fields as ConnectionExtension | undefined,
+            ),
+          );
         }),
       ) as Layer.Layer<never, never, never>;
     },
@@ -846,7 +1094,12 @@ export const Connection = Object.assign(
 
 export function toConnection<T>(
   rows: ReadonlyArray<T>,
-  options: { cursor: (t: T) => string; hasNextPage: boolean; hasPreviousPage?: boolean },
+  options: {
+    cursor: (t: T) => string;
+    hasNextPage: boolean;
+    hasPreviousPage?: boolean;
+    totalCount?: number;
+  },
 ): ConnectionPayload<T> {
   const edges = rows.map((node) => ({ node, cursor: options.cursor(node) }));
   const startCursor = edges.length > 0 ? edges[0]!.cursor : null;
@@ -859,6 +1112,7 @@ export function toConnection<T>(
       startCursor,
       endCursor,
     },
+    totalCount: options.totalCount ?? null,
   };
 }
 
@@ -900,13 +1154,14 @@ const readSub = (v: unknown): SubFieldRaw | null => {
 };
 
 // queryField — overloaded so the args type tightens on Connection input
-export function queryField<T, R = never>(
+export function queryField<T, R = never, A extends ArgDefs | undefined = undefined>(
   type: ConnectionType<T>,
   options: {
     readonly description?: string;
+    readonly args?: A;
     readonly resolve: (
       root: unknown,
-      args: PaginationArgs,
+      args: (A extends ArgDefs ? ArgsShape<A> : {}) & PaginationArgs,
       info: GraphQLResolveInfo,
     ) => Effect.Effect<ConnectionPayload<T>, unknown, R>;
   },

@@ -6,6 +6,7 @@ import {
   GraphQLObjectType,
   type GraphQLFieldConfig,
   type GraphQLFieldConfigArgumentMap,
+  type GraphQLFieldConfigMap,
   type GraphQLTypeResolver,
 } from "../afterglow-graphql/type/definition.ts";
 import {
@@ -113,23 +114,36 @@ export function buildPageInfoType(): GraphQLObjectType {
  * collapse the whole page.
  */
 export function buildConnectionTypes(
-  nodeName: string,
+  names: { readonly connectionName: string; readonly edgeName: string },
   nodeType: GraphQLObjectType,
   pageInfoType: GraphQLObjectType,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- context param is contravariant; any matches graphql-js field-config conventions
+  extraFields?: () => GraphQLFieldConfigMap<any, any>,
+  // Several connection types over the same node (the canonical one plus
+  // extended subclasses) share one Edge type — the caller passes the
+  // already-built instance so the schema sees a single type per name.
+  existingEdge?: GraphQLObjectType,
 ): { connection: GraphQLObjectType; edge: GraphQLObjectType } {
-  const edge = new GraphQLObjectType({
-    name: `${nodeName}Edge`,
-    fields: () => ({
-      node: projectedField(nodeType, "node"),
-      cursor: projectedField(new GraphQLNonNull(GraphQLString), "cursor"),
-    }),
-  });
+  const edge =
+    existingEdge ??
+    new GraphQLObjectType({
+      name: names.edgeName,
+      fields: () => ({
+        node: projectedField(nodeType, "node"),
+        cursor: projectedField(new GraphQLNonNull(GraphQLString), "cursor"),
+      }),
+    });
 
   const connection = new GraphQLObjectType({
-    name: `${nodeName}Connection`,
+    name: names.connectionName,
     fields: () => ({
       edges: projectedField(new GraphQLNonNull(new GraphQLList(edge)), "edges"),
       pageInfo: projectedField(new GraphQLNonNull(pageInfoType), "pageInfo"),
+      // Consumer-declared extension fields (e.g. totalCount) — the Cursor
+      // Connections spec permits additional connection fields; the canonical
+      // shape above is never overridable (reserved names are rejected at
+      // declaration time).
+      ...(extraFields !== undefined ? extraFields() : {}),
     }),
   });
 

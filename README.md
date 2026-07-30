@@ -76,7 +76,25 @@ These are not opt-in. Every schema produced by @y2k-network/afterglow gets them.
   Connection / Edge types auto-register the first time a field
   references `Connection(T)` — no separate `Connection.layer(T)` is
   required (though one is exported for users who want to register a
-  Connection without referencing it).
+  Connection without referencing it). The spec permits additional
+  connection fields; declare an extended connection type by subclassing,
+  with the same `fields` grammar as `Node.layer`:
+
+  ```ts
+  class ArticleFeedConnection extends GraphQL.Connection(Article, {
+    fields: (f) => ({ totalCount: f(Schema.Int) }),
+  }) {}
+
+  // use it wherever that shape is wanted; bare Connection(Article)
+  // elsewhere stays the canonical spec shape, and both share one Edge type
+  articles: GraphQL.queryField(ArticleFeedConnection, { resolve: ... })
+  ```
+
+  The subclass names the GraphQL type (it must end in `Connection`).
+  Extension resolvers receive the `ConnectionPayload<T>` the field's
+  resolver returned — bare schemas are payload-property pass-throughs,
+  and `toConnection` carries `totalCount` for that case. The canonical
+  `edges` / `pageInfo` names are reserved and rejected at declaration.
 - **All Relay client directives declared.** Around twenty-six
   directives spanning error handling (`@required`, `@throwOnFieldError`,
   `@catch`), fragment composition (`@inline`, `@no_inline`, `@relay`,

@@ -134,6 +134,13 @@ export interface IRConnectionFragment {
   readonly name: string;
   readonly edgeName: string;
   readonly nodeTypeName: string;
+  /**
+   * Consumer-declared extension fields (`Connection(T, { fields })`) —
+   * additional connection fields the Cursor Connections spec permits,
+   * e.g. totalCount. Resolved against the `ConnectionPayload` parent.
+   * The canonical `edges` / `pageInfo` names are rejected at declaration.
+   */
+  readonly extraFields?: Record<string, IRFieldDef>;
 }
 
 export interface IRScalarFragment {
@@ -141,6 +148,20 @@ export interface IRScalarFragment {
   readonly name: string;
   readonly description?: string;
   readonly schema: Schema.Codec<unknown, string | number | boolean, never, never>;
+}
+
+/**
+ * A GraphQL enum synthesized from an identifier-annotated string-literal
+ * union used in output position. Mirrors the input-side lowering in
+ * `schema/bridge.ts` — both sides dedupe through the shared type registry,
+ * so the same union schema used as an arg AND a field type produces one
+ * enum type.
+ */
+export interface IREnumFragment {
+  readonly kind: "enum";
+  readonly name: string;
+  readonly values: ReadonlyArray<string>;
+  readonly description?: string;
 }
 
 export interface IRInputFragment {
@@ -169,6 +190,7 @@ export type IRFragment =
   | IRObjectFragment
   | IRConnectionFragment
   | IRScalarFragment
+  | IREnumFragment
   | IRInputFragment
   | IRQueryFragment
   | IRMutationFragment
@@ -185,6 +207,7 @@ export interface IR {
   readonly objects: Map<string, IRObjectFragment>;
   readonly connections: Map<string, IRConnectionFragment>;
   readonly scalars: Map<string, IRScalarFragment>;
+  readonly enums: Map<string, IREnumFragment>;
   readonly inputs: Map<string, IRInputFragment>;
   readonly queryFields: Record<string, IRFieldDef>;
   readonly mutationFields: Record<string, IRFieldDef>;
@@ -198,6 +221,7 @@ export const emptyIR = (): IR => ({
   objects: new Map(),
   connections: new Map(),
   scalars: new Map(),
+  enums: new Map(),
   inputs: new Map(),
   queryFields: {},
   mutationFields: {},
@@ -213,11 +237,26 @@ export const addFragment = (ir: IR, fragment: IRFragment): void => {
     case "object":
       ir.objects.set(fragment.name, fragment);
       break;
-    case "connection":
-      ir.connections.set(fragment.name, fragment);
+    case "connection": {
+      // The same connection may be referenced from several fields — some
+      // bare `Connection(T)`, some with extensions. Extensions accumulate;
+      // a bare reference never clears previously declared extra fields.
+      const existing = ir.connections.get(fragment.name);
+      if (existing?.extraFields !== undefined || fragment.extraFields !== undefined) {
+        ir.connections.set(fragment.name, {
+          ...fragment,
+          extraFields: { ...existing?.extraFields, ...fragment.extraFields },
+        });
+      } else {
+        ir.connections.set(fragment.name, fragment);
+      }
       break;
+    }
     case "scalar":
       ir.scalars.set(fragment.name, fragment);
+      break;
+    case "enum":
+      ir.enums.set(fragment.name, fragment);
       break;
     case "input":
       ir.inputs.set(fragment.name, fragment);

@@ -41,6 +41,14 @@ export interface ConnectionPayload<T> {
     readonly startCursor: string | null;
     readonly endCursor: string | null;
   };
+  /**
+   * Total row count across all pages, carried on the payload for the
+   * common `Connection(T, { fields: (f) => ({ totalCount: f(Schema.Int) }) })`
+   * extension. Connections stay canonical Cursor Connections shape unless
+   * the consumer declares extra fields — this property only reaches the
+   * wire when a `totalCount` extension field projects it.
+   */
+  readonly totalCount?: number | null;
 }
 
 export interface PaginationArgs {

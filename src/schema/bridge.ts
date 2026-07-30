@@ -12,6 +12,7 @@ import {
 import {
   GraphQLBoolean,
   GraphQLFloat,
+  GraphQLInt,
   GraphQLString,
 } from "../afterglow-graphql/type/scalars.ts";
 import { Kind } from "../afterglow-graphql/language/kinds.ts";
@@ -42,6 +43,21 @@ export function schemaToInputType(
  * so the SDL matches what the resolver types already assume — `ArgsShape`
  * types a bare schema's arg as `S["Type"]` with no undefined.
  */
+/**
+ * Whether a Number AST carries effect's built-in integer check
+ * (`Schema.Int`, or `Schema.Number.check(Schema.isInt())`). Int-checked
+ * numbers lower to GraphQL `Int` — note GraphQL `Int` is a 32-bit signed
+ * integer per spec; values past 2^31-1 need the `BigInt` standard scalar.
+ */
+export function hasIntCheck(ast: SchemaAST.AST): boolean {
+  const checks = (ast as {
+    checks?: ReadonlyArray<{
+      readonly annotations?: { readonly representation?: { readonly id?: unknown } };
+    }>;
+  }).checks;
+  return checks?.some((c) => c?.annotations?.representation?.id === "effect/schema/isInt") ?? false;
+}
+
 export function isRequiredInputSchema(schema: Schema.Top): boolean {
   const ast = schema.ast;
   if (ast.context?.isOptional === true) return false;
@@ -110,7 +126,7 @@ function astToInputType(
     case "String":
       return GraphQLString;
     case "Number":
-      return GraphQLFloat;
+      return hasIntCheck(ast) ? GraphQLInt : GraphQLFloat;
     case "Boolean":
       return GraphQLBoolean;
 
