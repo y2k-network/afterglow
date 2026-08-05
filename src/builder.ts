@@ -55,6 +55,7 @@ import type {
   IRScalarFragment,
   IRSubscriptionFieldDef,
   IRSubscriptionFragment,
+  IRUnionFragment,
   IRViewerFragment,
 } from "./ir.ts";
 import { recordFragment } from "./registry.ts";
@@ -73,6 +74,7 @@ import type {
   QueryFieldDef,
   ScalarType,
   SchemaClass,
+  UnionType,
   WireResult,
   SubscriptionFieldDef,
 } from "./types.ts";
@@ -245,7 +247,7 @@ export function field<
   A extends ArgDefs | undefined = undefined,
   NN extends boolean | undefined = undefined,
 >(
-  type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top,
+  type: SchemaClass<T> | ScalarType<T> | IDMarker | UnionType<T> | Schema.Top,
   options?: FieldOptions<TParent, WireResult<T, NN>, A extends ArgDefs ? ArgsShape<A> : {}, R> & {
     args?: A;
     nonNull?: NN;
@@ -338,6 +340,20 @@ const outputTypeToIR = (t: FieldOutputType | ConnectionType<unknown>): IROutputT
     const fragment = makeConnectionFragment(nodeName, extend, declaredName);
     recordFragment(fragment);
     return { kind: "named", name: fragment.name };
+  }
+  // Union(...) marker — carries its member classes (for instanceof-based
+  // resolveType) plus the positional name. Like Connection, not registered
+  // at construction time: auto-registers here, the first time the union is
+  // referenced from a field's type during an active build, so a Union
+  // declared at module scope doesn't bind to whatever build happened to be
+  // active when the module loaded.
+  const unionMarker = readUnionMarker(t);
+  if (unionMarker !== null) {
+    for (let i = 0; i < unionMarker.members.length; i++) {
+      registerObjectCandidate(unionMarker.memberNames[i]!, unionMarker.members[i]);
+    }
+    recordFragment(unionMarker.frag);
+    return { kind: "named", name: unionMarker.frag.name };
   }
   // Scalar def from Scalar(...) — register on demand
   if (typeof t === "object" && t !== null && "name" in (t as object) && "schema" in (t as object)) {
@@ -590,6 +606,17 @@ const compileFieldEntry = (
       resolve: defaultPassthroughResolve(fieldName),
     };
   }
+  // Case 2b: Union(...) shorthand: `actor: ActorUnion` is a valid bare
+  // property pass-through, same as the ScalarType shorthand above.
+  if (readUnionMarker(raw) !== null) {
+    return {
+      type: outputTypeToIR(raw as UnionType<unknown>),
+      nonNull: false,
+      args: {},
+      projection: { _tag: "Property", key: fieldName },
+      resolve: defaultPassthroughResolve(fieldName),
+    };
+  }
   // Case 3: Schema.Top — either a bare pass-through (e.g. `title: Schema.String`)
   // or a pipe-attached resolver (`title: Schema.String.pipe(GraphQL.resolve((u) => u.title))`).
   // Schemas are callable functions on effect ≥ beta.100, so accept both
@@ -751,6 +778,7 @@ type NodeFieldOutput<T> =
   | Schema.Top
   | ScalarType<any>
   | SchemaClass<any>
+  | UnionType<any>
   | IDMarker;
 
 /**
@@ -784,14 +812,14 @@ export interface FieldHelper<T> {
     },
   ): FieldDef<T, R>;
   <Type, R = never, A extends ArgDefs | undefined = undefined, NN extends boolean | undefined = undefined>(
-    type: SchemaClass<Type> | ScalarType<Type> | IDMarker | Schema.Top,
+    type: SchemaClass<Type> | ScalarType<Type> | IDMarker | UnionType<Type> | Schema.Top,
     options: FieldOptions<T, WireResult<Type, NN>, A extends ArgDefs ? ArgsShape<A> : {}, R> & {
       args?: A;
       nonNull?: NN;
     },
   ): FieldDef<T, R>;
   <Type>(
-    type: SchemaClass<Type> | ScalarType<Type> | IDMarker | Schema.Top,
+    type: SchemaClass<Type> | ScalarType<Type> | IDMarker | UnionType<Type> | Schema.Top,
   ): FieldDef<T, never>;
 }
 
@@ -1154,6 +1182,112 @@ export function toConnection<T>(
 }
 
 // ---------------------------------------------------------------------------
+// Union — GraphQL union output type over several distinct member classes.
+//
+// `type Actor = User | Service | Anonymous`, declared:
+//
+//   const ActorUnion = GraphQL.Union("Actor", [User, Service, Anonymous], {
+//     description: "Whoever/whatever is making this request.",
+//   })
+//
+// then referenced as a field's output type exactly like any other type:
+// `f(ActorUnion, { resolve: (parent) => ... })`, or bare as a property
+// pass-through (`actor: ActorUnion`).
+//
+// The name is a required positional identifier — the same convention as
+// `Connection(T, "Name", {...})` — because unlike `Node.layer` / a bare
+// `Schema.Class`, a union of several classes has no single class to derive
+// a GraphQL name from.
+// ---------------------------------------------------------------------------
+
+const UNION_FRAG_KEY = Symbol("v2/union-frag");
+
+interface UnionMarkerPayload {
+  readonly frag: IRUnionFragment;
+  readonly members: ReadonlyArray<SchemaClass<unknown>>;
+  readonly memberNames: ReadonlyArray<string>;
+}
+
+const readUnionMarker = (v: unknown): UnionMarkerPayload | null => {
+  if ((typeof v !== "object" && typeof v !== "function") || v === null) return null;
+  const p = (v as Record<symbol, unknown>)[UNION_FRAG_KEY];
+  return (p as UnionMarkerPayload) ?? null;
+};
+
+/**
+ * Build the union's IR fragment + resolved member names. Shared by the
+ * `Union(...)` constructor (lazy, auto-registered on reference — see
+ * `outputTypeToIR`) and `Union.layer(...)` (eager, explicit SchemaLayer
+ * registration — mirrors `Connection.layer`).
+ *
+ * `classIdentifier` throws `InvalidNodeClass` synchronously here, at
+ * declaration time, the same way `Node.layer` / `Connection` validate their
+ * class arguments before returning — not lazily at `buildSchema`.
+ */
+const makeUnionFragment = (
+  name: string,
+  members: ReadonlyArray<SchemaClass<unknown>>,
+  description: string | undefined,
+): { frag: IRUnionFragment; memberNames: ReadonlyArray<string> } => {
+  const memberNames = members.map((m) => classIdentifier(m as SchemaClass<unknown>));
+  // instanceof dispatch, in declaration order. Schema.Class instances are
+  // real JS classes on effect ≥ beta.100 — see IRUnionFragment's doc comment
+  // in ir.ts for why this (rather than a `__typename` marker) is the only
+  // reliable signal at resolveType time for values a union field's own
+  // resolver returns directly.
+  const resolveTypeName = (value: unknown): string | undefined => {
+    for (let i = 0; i < members.length; i++) {
+      if (value instanceof (members[i] as unknown as new (...args: Array<unknown>) => unknown)) {
+        return memberNames[i];
+      }
+    }
+    return undefined;
+  };
+  return {
+    frag: { kind: "union", name, description, memberNames, resolveTypeName },
+    memberNames,
+  };
+};
+
+function UnionFn<Members extends ReadonlyArray<SchemaClass<any>>>(
+  name: string,
+  members: Members,
+  config?: { readonly description?: string },
+): UnionType<Members[number] extends SchemaClass<infer U> ? U : never> {
+  const { frag, memberNames } = makeUnionFragment(name, members, config?.description);
+  const payload: UnionMarkerPayload = { frag, members, memberNames };
+  const marker = Object.create(null) as Record<symbol, unknown>;
+  Object.defineProperty(marker, UNION_FRAG_KEY, { value: payload, enumerable: false });
+  return marker as unknown as UnionType<any>;
+}
+
+/**
+ * Layer-form registration — the Layer-driven twin of the `Union(...)` call
+ * form. Use it to declare a union as part of the SchemaLayer composition
+ * instead of at a reference site (`Connection.layer` is the same idea for
+ * connections). Members that aren't already registered (via `Node.layer` or
+ * a prior reference elsewhere) auto-register as plain object types here,
+ * same as at a `Union(...)` reference site.
+ */
+function unionLayer<Members extends ReadonlyArray<SchemaClass<any>>>(
+  name: string,
+  members: Members,
+  config?: { readonly description?: string },
+): Layer.Layer<never, never, never> {
+  return Layer.effectDiscard(
+    Effect.sync(() => {
+      const { frag, memberNames } = makeUnionFragment(name, members, config?.description);
+      for (let i = 0; i < members.length; i++) {
+        registerObjectCandidate(memberNames[i]!, members[i]);
+      }
+      recordFragment(frag);
+    }),
+  ) as Layer.Layer<never, never, never>;
+}
+
+export const Union = Object.assign(UnionFn, { layer: unionLayer });
+
+// ---------------------------------------------------------------------------
 // Query / Mutation / Subscription field constructors
 // ---------------------------------------------------------------------------
 
@@ -1209,7 +1343,7 @@ export function queryField<
   R = never,
   NN extends boolean | undefined = undefined,
 >(
-  type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top,
+  type: SchemaClass<T> | ScalarType<T> | IDMarker | UnionType<T> | Schema.Top,
   options: {
     readonly nonNull?: NN;
     readonly semanticNonNull?: boolean;
@@ -1249,7 +1383,7 @@ export function mutationField<
   NN extends boolean | undefined = undefined,
 >(
   options: {
-    readonly output: SchemaClass<O> | ScalarType<O> | IDMarker | Schema.Top | ConnectionType<O>;
+    readonly output: SchemaClass<O> | ScalarType<O> | IDMarker | UnionType<O> | Schema.Top | ConnectionType<O>;
     readonly nonNull?: NN;
     readonly semanticNonNull?: boolean;
     readonly description?: string;
@@ -1269,7 +1403,7 @@ export function mutationField<
   NN extends boolean | undefined = undefined,
 >(
   options: {
-    readonly output: SchemaClass<O> | ScalarType<O> | IDMarker | Schema.Top | ConnectionType<O>;
+    readonly output: SchemaClass<O> | ScalarType<O> | IDMarker | UnionType<O> | Schema.Top | ConnectionType<O>;
     readonly nonNull?: NN;
     readonly semanticNonNull?: boolean;
     readonly description?: string;
@@ -1305,7 +1439,7 @@ export function mutationField(options: any): MutationFieldDef<any> {
 
 // subscriptionField
 export function subscriptionField<T, A extends ArgDefs | undefined, R = never>(
-  type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top,
+  type: SchemaClass<T> | ScalarType<T> | IDMarker | UnionType<T> | Schema.Top,
   options: {
     readonly nonNull?: boolean;
     readonly description?: string;
@@ -1487,4 +1621,4 @@ export const edgePayload = <T>(
 // Re-export type aliases users may want
 // ---------------------------------------------------------------------------
 
-export type { ConnectionType, ConnectionPayload, PaginationArgs, ScalarType, FieldDef, QueryFieldDef, MutationFieldDef, SubscriptionFieldDef } from "./types.ts";
+export type { ConnectionType, ConnectionPayload, PaginationArgs, ScalarType, FieldDef, QueryFieldDef, MutationFieldDef, SubscriptionFieldDef, UnionType } from "./types.ts";

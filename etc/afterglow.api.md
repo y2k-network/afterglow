@@ -16,7 +16,7 @@ import { YieldableError } from 'effect/Cause';
 type AfterglowError = ArgDecodeError | NonSyncDecodableArg | ResolverFailure | SubscribeFailure | OperationParseError | OperationValidationError | PersistedQueryNotFound | WSProtocolError | UnknownNodeType | InvalidGlobalId | GlobalIdTypeMismatch | HttpRequestError;
 
 // @public
-type AfterglowSchemaError = DuplicateViewer | InvalidNodeClass | UnsupportedFieldShape | UnsupportedOutputType | InvalidRootField | InvalidConnectionIdentifier | ReservedConnectionField | InvalidMutationInput | MissingIdentifierAnnotation | UnmappableAst | InputUnionNotSupported | EmptyArraySchema | NonStringLiteral | InvalidSuspendInput | UnsupportedLiteralKind | TypeRegistryConflict | MissingQueryFields | MissingType | InvalidConnectionNode | InvalidInputFragment | InternalInvariant | SchemaLintError;
+type AfterglowSchemaError = DuplicateViewer | InvalidNodeClass | UnsupportedFieldShape | UnsupportedOutputType | InvalidRootField | InvalidConnectionIdentifier | ReservedConnectionField | InvalidMutationInput | MissingIdentifierAnnotation | UnmappableAst | InputUnionNotSupported | EmptyArraySchema | NonStringLiteral | InvalidSuspendInput | UnsupportedLiteralKind | TypeRegistryConflict | MissingQueryFields | MissingType | InvalidConnectionNode | InvalidUnionMember | InvalidInputFragment | InternalInvariant | SchemaLintError;
 
 // Warning: (ae-forgotten-export) The symbol "GraphQLDirective" needs to be exported by the entry point index.d.ts
 //
@@ -233,6 +233,7 @@ declare namespace Errors {
         MissingQueryFields,
         MissingType,
         InvalidConnectionNode,
+        InvalidUnionMember,
         InvalidInputFragment,
         InternalInvariant,
         SchemaLintError,
@@ -306,7 +307,7 @@ export function field<TParent, T, R = never>(type: ConnectionType<T>, options: {
 // Warning: (ae-forgotten-export) The symbol "ArgsShape" needs to be exported by the entry point index.d.ts
 //
 // @public (undocumented)
-export function field<TParent, T, R = never, A extends ArgDefs | undefined = undefined, NN extends boolean | undefined = undefined>(type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top, options?: FieldOptions<TParent, WireResult<T, NN>, A extends ArgDefs ? ArgsShape<A> : {}, R> & {
+export function field<TParent, T, R = never, A extends ArgDefs | undefined = undefined, NN extends boolean | undefined = undefined>(type: SchemaClass<T> | ScalarType<T> | IDMarker | UnionType<T> | Schema.Top, options?: FieldOptions<TParent, WireResult<T, NN>, A extends ArgDefs ? ArgsShape<A> : {}, R> & {
     args?: A;
     nonNull?: NN;
 }): FieldDef<TParent, R>;
@@ -357,6 +358,7 @@ declare namespace GraphQL {
         Query,
         Scalar,
         Subscription,
+        Union,
         Viewer,
         deletedId,
         edgePayload,
@@ -382,7 +384,8 @@ declare namespace GraphQL {
         QueryFieldDef,
         ScalarType,
         SchemaClass,
-        SubscriptionFieldDef
+        SubscriptionFieldDef,
+        UnionType
     }
 }
 
@@ -633,6 +636,18 @@ class InvalidSuspendInput extends InvalidSuspendInput_base<{
     get message(): string;
 }
 
+// Warning: (ae-forgotten-export) The symbol "InvalidUnionMember_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+class InvalidUnionMember extends InvalidUnionMember_base<{
+    readonly unionName: string;
+    readonly memberName: string;
+    readonly reason: "unregistered" | "not-an-object-type";
+}> {
+    // (undocumented)
+    get message(): string;
+}
+
 // @public (undocumented)
 function isGraphQLError(error: unknown): error is GraphQLError;
 
@@ -716,7 +731,7 @@ export const Mutation: {
 
 // @public (undocumented)
 export function mutationField<O, I, A extends ArgDefs | undefined = undefined, R = never, NN extends boolean | undefined = undefined>(options: {
-    readonly output: SchemaClass<O> | ScalarType<O> | IDMarker | Schema.Top | ConnectionType<O>;
+    readonly output: SchemaClass<O> | ScalarType<O> | IDMarker | UnionType<O> | Schema.Top | ConnectionType<O>;
     readonly nonNull?: NN;
     readonly semanticNonNull?: boolean;
     readonly description?: string;
@@ -729,7 +744,7 @@ export function mutationField<O, I, A extends ArgDefs | undefined = undefined, R
 
 // @public (undocumented)
 export function mutationField<O, A extends ArgDefs | undefined = undefined, R = never, NN extends boolean | undefined = undefined>(options: {
-    readonly output: SchemaClass<O> | ScalarType<O> | IDMarker | Schema.Top | ConnectionType<O>;
+    readonly output: SchemaClass<O> | ScalarType<O> | IDMarker | UnionType<O> | Schema.Top | ConnectionType<O>;
     readonly nonNull?: NN;
     readonly semanticNonNull?: boolean;
     readonly description?: string;
@@ -856,7 +871,7 @@ export function queryField<T, R = never, A extends ArgDefs | undefined = undefin
 }): QueryFieldDef<R>;
 
 // @public (undocumented)
-export function queryField<T, A extends ArgDefs | undefined, R = never, NN extends boolean | undefined = undefined>(type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top, options: {
+export function queryField<T, A extends ArgDefs | undefined, R = never, NN extends boolean | undefined = undefined>(type: SchemaClass<T> | ScalarType<T> | IDMarker | UnionType<T> | Schema.Top, options: {
     readonly nonNull?: NN;
     readonly semanticNonNull?: boolean;
     readonly description?: string;
@@ -989,7 +1004,7 @@ export const Subscription: {
 };
 
 // @public (undocumented)
-export function subscriptionField<T, A extends ArgDefs | undefined, R = never>(type: SchemaClass<T> | ScalarType<T> | IDMarker | Schema.Top, options: {
+export function subscriptionField<T, A extends ArgDefs | undefined, R = never>(type: SchemaClass<T> | ScalarType<T> | IDMarker | UnionType<T> | Schema.Top, options: {
     readonly nonNull?: boolean;
     readonly description?: string;
     readonly args?: A;
@@ -1024,6 +1039,19 @@ class TypeRegistryConflict extends TypeRegistryConflict_base<{
 }> {
     // (undocumented)
     get message(): string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "UnionFn" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+export const Union: typeof UnionFn & {
+    layer: typeof unionLayer;
+};
+
+// @public (undocumented)
+export interface UnionType<T> {
+    // (undocumented)
+    readonly [UnionBrand]: T;
 }
 
 // Warning: (ae-forgotten-export) The symbol "UnknownNodeType_base" needs to be exported by the entry point index.d.ts
@@ -1120,10 +1148,11 @@ class WSProtocolError extends WSProtocolError_base<{
 
 // Warnings were encountered during analysis:
 //
-// src/builder.ts:823:9 - (ae-forgotten-export) The symbol "FieldHelper" needs to be exported by the entry point index.d.ts
-// src/builder.ts:823:9 - (ae-forgotten-export) The symbol "NodeFieldOutput" needs to be exported by the entry point index.d.ts
-// src/builder.ts:1103:5 - (ae-forgotten-export) The symbol "connectionLayer" needs to be exported by the entry point index.d.ts
-// src/builder.ts:1258:5 - (ae-forgotten-export) The symbol "GraphQLResolveInfo" needs to be exported by the entry point index.d.ts
+// src/builder.ts:851:9 - (ae-forgotten-export) The symbol "FieldHelper" needs to be exported by the entry point index.d.ts
+// src/builder.ts:851:9 - (ae-forgotten-export) The symbol "NodeFieldOutput" needs to be exported by the entry point index.d.ts
+// src/builder.ts:1131:5 - (ae-forgotten-export) The symbol "connectionLayer" needs to be exported by the entry point index.d.ts
+// src/builder.ts:1288:19 - (ae-forgotten-export) The symbol "unionLayer" needs to be exported by the entry point index.d.ts
+// src/builder.ts:1392:5 - (ae-forgotten-export) The symbol "GraphQLResolveInfo" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

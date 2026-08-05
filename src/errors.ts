@@ -374,6 +374,19 @@ export class InvalidConnectionNode extends Data.TaggedError("InvalidConnectionNo
   }
 }
 
+/** A union fragment points at a member type that isn't lowerable. */
+export class InvalidUnionMember extends Data.TaggedError("InvalidUnionMember")<{
+  readonly unionName: string;
+  readonly memberName: string;
+  readonly reason: "unregistered" | "not-an-object-type";
+}> {
+  override get message(): string {
+    return this.reason === "unregistered"
+      ? `@y2k-network/afterglow: union "${this.unionName}" references unknown member type "${this.memberName}"`
+      : `@y2k-network/afterglow: union "${this.unionName}" expected member type "${this.memberName}" to be a GraphQLObjectType`;
+  }
+}
+
 /** A registered input fragment did not lower to an input object type. */
 export class InvalidInputFragment extends Data.TaggedError("InvalidInputFragment")<{
   readonly inputName: string;
@@ -431,6 +444,7 @@ export type AfterglowSchemaError =
   | MissingQueryFields
   | MissingType
   | InvalidConnectionNode
+  | InvalidUnionMember
   | InvalidInputFragment
   | InternalInvariant
   | SchemaLintError;

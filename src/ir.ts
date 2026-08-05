@@ -130,6 +130,37 @@ export interface IRObjectFragment {
   readonly fields: Record<string, IRFieldDef>;
 }
 
+/**
+ * A GraphQL union output type over several distinct object-backed classes —
+ * `type Actor = User | Service | Anonymous`. Declared via `GraphQL.Union`
+ * (the same auto-registration convention as `GraphQL.Connection`); the name
+ * is a required positional identifier, mirroring `Connection(T, "Name",
+ * {...})`, because a union has no single class to derive a name from the
+ * way `Node.layer` / a bare `Schema.Class` do.
+ *
+ * `memberNames` are the union's `possibleTypes` — the SAME GraphQL object
+ * types Node.layer / plain-object auto-registration already produce. A
+ * union doesn't own a distinct shape for its members; it just groups
+ * already-lowerable object types under one abstract type, so members may be
+ * Node.layer types, auto-registered plain objects, or a mix.
+ *
+ * `resolveTypeName` is the execution-time dispatch: given a resolved field
+ * value, which member does it belong to? Schema.Class instances are real JS
+ * classes on effect >= beta.100, so `instanceof` against the declared member
+ * classes is precise — and it's the only signal available here. Unlike
+ * Node's `node(id:)` path (which the framework stamps `__typename` onto the
+ * loaded value itself, see `relay/core.ts`), a value a union field's own
+ * resolver returns carries no such marker; nothing else in this framework
+ * tags arbitrary resolver results with their concrete type.
+ */
+export interface IRUnionFragment {
+  readonly kind: "union";
+  readonly name: string;
+  readonly description?: string;
+  readonly memberNames: ReadonlyArray<string>;
+  readonly resolveTypeName: (value: unknown) => string | undefined;
+}
+
 export interface IRConnectionFragment {
   readonly kind: "connection";
   readonly name: string;
@@ -189,6 +220,7 @@ export interface IRSubscriptionFragment {
 export type IRFragment =
   | IRNodeFragment
   | IRObjectFragment
+  | IRUnionFragment
   | IRConnectionFragment
   | IRScalarFragment
   | IREnumFragment
@@ -206,6 +238,7 @@ export type IRFragment =
 export interface IR {
   readonly nodes: Map<string, IRNodeFragment>;
   readonly objects: Map<string, IRObjectFragment>;
+  readonly unions: Map<string, IRUnionFragment>;
   readonly connections: Map<string, IRConnectionFragment>;
   readonly scalars: Map<string, IRScalarFragment>;
   readonly enums: Map<string, IREnumFragment>;
@@ -220,6 +253,7 @@ export interface IR {
 export const emptyIR = (): IR => ({
   nodes: new Map(),
   objects: new Map(),
+  unions: new Map(),
   connections: new Map(),
   scalars: new Map(),
   enums: new Map(),
@@ -237,6 +271,9 @@ export const addFragment = (ir: IR, fragment: IRFragment): void => {
       break;
     case "object":
       ir.objects.set(fragment.name, fragment);
+      break;
+    case "union":
+      ir.unions.set(fragment.name, fragment);
       break;
     case "connection": {
       // The same connection may be referenced from several fields — some

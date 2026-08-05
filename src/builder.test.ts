@@ -22,7 +22,8 @@ import { subscribe } from "./afterglow-graphql/execution/subscribe.ts";
 import { printSchema } from "./afterglow-graphql/utilities/print-schema.ts";
 import { GraphQL } from "./index.ts";
 import { buildSchema } from "./schema/build.ts";
-import { Node, Query, Mutation, Connection, Subscription, Viewer, queryField, mutationField, subscriptionField, field, resolve, ID, Scalar, globalId, parseGlobalId, deletedId, toConnection } from "./builder.ts";
+import { Node, Query, Mutation, Connection, Subscription, Union, Viewer, queryField, mutationField, subscriptionField, field, resolve, ID, Scalar, globalId, parseGlobalId, deletedId, toConnection } from "./builder.ts";
+import type { SchemaClass } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Type-level inference assertions
@@ -1094,6 +1095,207 @@ test("smoke: bare connections stay canonical — no extension fields; reserved n
   });
   expect(() => buildSchema(Layer.mergeAll(NoteNode, BadQuery))).toThrow(
     /part of the canonical Relay connection shape/,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// GraphQL.Union — union output type over several distinct classes.
+// ---------------------------------------------------------------------------
+
+test("smoke: GraphQL.Union declares a real union type, resolved by instanceof for distinct member types", async () => {
+  class ActorUser extends Schema.Class<ActorUser>("ActorUser")({
+    id: Schema.String,
+    walletAddress: Schema.NullOr(Schema.String),
+  }) {}
+  class ActorService extends Schema.Class<ActorService>("ActorService")({
+    appId: Schema.String,
+  }) {}
+  class ActorAnonymous extends Schema.Class<ActorAnonymous>("ActorAnonymous")({
+    reason: Schema.String,
+  }) {}
+
+  const ActorUnion = Union("Actor", [ActorUser, ActorService, ActorAnonymous], {
+    description: "Whoever/whatever is making this request.",
+  });
+
+  const QueryLayer = Query.layer({
+    actorFor: queryField(ActorUnion, {
+      args: { kind: Schema.String },
+      resolve: (_root, { kind }) => {
+        if (kind === "user") {
+          return Effect.succeed(new ActorUser({ id: "1", walletAddress: null }));
+        }
+        if (kind === "service") {
+          return Effect.succeed(new ActorService({ appId: "svc-1" }));
+        }
+        return Effect.succeed(new ActorAnonymous({ reason: "no session" }));
+      },
+    }),
+  });
+
+  const schema = buildSchema(Layer.mergeAll(QueryLayer));
+  const sdl = printSchema(schema);
+  expect(sdl).toContain("union Actor = ActorUser | ActorService | ActorAnonymous");
+  expect(sdl).toContain("type ActorUser {");
+  expect(sdl).toContain("type ActorService {");
+
+  const document = parse(`
+    query($kind: String!) {
+      actorFor(kind: $kind) {
+        __typename
+        ... on ActorUser { id walletAddress }
+        ... on ActorService { appId }
+        ... on ActorAnonymous { reason }
+      }
+    }
+  `);
+
+  // Same field, two different concrete member types resolved at runtime —
+  // this is the real assertion: SDL shape alone doesn't prove resolveType
+  // dispatches correctly.
+  const userResult = await execute({
+    schema,
+    document,
+    variableValues: { kind: "user" },
+    contextValue: Context.empty(),
+  });
+  expect(userResult.errors).toBeUndefined();
+  expect(userResult.data).toEqual({
+    actorFor: { __typename: "ActorUser", id: "1", walletAddress: null },
+  });
+
+  const serviceResult = await execute({
+    schema,
+    document,
+    variableValues: { kind: "service" },
+    contextValue: Context.empty(),
+  });
+  expect(serviceResult.errors).toBeUndefined();
+  expect(serviceResult.data).toEqual({
+    actorFor: { __typename: "ActorService", appId: "svc-1" },
+  });
+
+  const anonResult = await execute({
+    schema,
+    document,
+    variableValues: { kind: "anonymous" },
+    contextValue: Context.empty(),
+  });
+  expect(anonResult.errors).toBeUndefined();
+  expect(anonResult.data).toEqual({
+    actorFor: { __typename: "ActorAnonymous", reason: "no session" },
+  });
+});
+
+test("smoke: union field with no inline fragments — only __typename is selectable, doesn't crash", async () => {
+  class Wobble extends Schema.Class<Wobble>("Wobble")({ id: Schema.String }) {}
+  class Wibble extends Schema.Class<Wibble>("Wibble")({ id: Schema.String }) {}
+
+  const ThingUnion = Union("Thing", [Wobble, Wibble]);
+
+  const QueryLayer = Query.layer({
+    thing: queryField(ThingUnion, {
+      resolve: () => Effect.succeed(new Wobble({ id: "1" })),
+    }),
+  });
+
+  const schema = buildSchema(Layer.mergeAll(QueryLayer));
+  const result = await execute({
+    schema,
+    document: parse(`{ thing { __typename } }`),
+    contextValue: Context.empty(),
+  });
+  expect(result.errors).toBeUndefined();
+  expect(result.data).toEqual({ thing: { __typename: "Wobble" } });
+});
+
+test("smoke: union member that's also a Node.layer type — node(id:) refetch and union-field resolution both work", async () => {
+  class Account extends Schema.Class<Account>("Account")({
+    id: Schema.String,
+    handle: Schema.String,
+  }) {}
+  class Bot extends Schema.Class<Bot>("Bot")({
+    name: Schema.String,
+  }) {}
+
+  const AccountNode = Node.layer(Account)({
+    fields: () => ({ handle: Schema.String }),
+    load: (id) => Effect.succeed(new Account({ id, handle: `handle-${id}` })),
+  });
+
+  const AgentUnion = Union("Agent", [Account, Bot]);
+
+  const QueryLayer = Query.layer({
+    agent: queryField(AgentUnion, {
+      resolve: () => Effect.succeed(new Account({ id: "42", handle: "ada" })),
+    }),
+  });
+
+  const schema = buildSchema(Layer.mergeAll(AccountNode, QueryLayer));
+  const sdl = printSchema(schema);
+  expect(sdl).toContain("union Agent = Account | Bot");
+  expect(sdl).toContain("type Account implements Node");
+
+  // Union-field resolution: the resolver returns the Account instance
+  // directly — no node(id:) load involved, so nothing stamped `__typename`
+  // onto it the way relay/core.ts does for the node(id:) path. instanceof
+  // dispatch must still find Account on its own.
+  const unionResult = await execute({
+    schema,
+    document: parse(`{ agent { __typename ... on Account { id handle } ... on Bot { name } } }`),
+    contextValue: Context.empty(),
+  });
+  expect(unionResult.errors).toBeUndefined();
+  expect(unionResult.data).toEqual({
+    agent: { __typename: "Account", id: globalId("Account", "42"), handle: "ada" },
+  });
+
+  // node(id:) refetch for the same type still works independently — the
+  // union and the Node interface share one Account GraphQLObjectType and
+  // don't step on each other.
+  const gid = globalId("Account", "7");
+  const nodeResult = await execute({
+    schema,
+    document: parse(`{ node(id: "${gid}") { ... on Account { id handle } } }`),
+    contextValue: Context.empty(),
+  });
+  expect(nodeResult.errors).toBeUndefined();
+  expect(nodeResult.data).toEqual({ node: { id: gid, handle: "handle-7" } });
+});
+
+test("smoke: GraphQL.Union.layer registers explicitly; bare Union shorthand is a property pass-through", async () => {
+  class Fox extends Schema.Class<Fox>("Fox")({ id: Schema.String }) {}
+  class Hound extends Schema.Class<Hound>("Hound")({ id: Schema.String }) {}
+
+  const ChaserUnion = Union("Chaser", [Fox, Hound]);
+  const ChaserUnionLayer = Union.layer("Chaser", [Fox, Hound]);
+
+  const ViewerLayer = Viewer.layer({
+    fields: (f) => ({
+      // Bare shorthand: `chaser: ChaserUnion` is a property pass-through,
+      // the same convention as a bare SchemaClass/ScalarType field.
+      chaser: ChaserUnion,
+    }),
+    resolve: () => Effect.succeed({ chaser: new Fox({ id: "f1" }) }),
+  });
+
+  const schema = buildSchema(Layer.mergeAll(ViewerLayer, ChaserUnionLayer));
+  const sdl = printSchema(schema);
+  expect(sdl).toContain("union Chaser = Fox | Hound");
+
+  const result = await execute({
+    schema,
+    document: parse(`{ viewer { chaser { __typename ... on Fox { id } } } }`),
+    contextValue: Context.empty(),
+  });
+  expect(result.errors).toBeUndefined();
+  expect(result.data).toEqual({ viewer: { chaser: { __typename: "Fox", id: "f1" } } });
+});
+
+test("smoke: GraphQL.Union member without an identifier annotation fails at declaration time", () => {
+  const NoIdentifier = Schema.Struct({ foo: Schema.String });
+  expect(() => Union("Bad", [NoIdentifier as unknown as SchemaClass<unknown>])).toThrow(
+    /require a Schema\.Class — the class identifier was not a string/,
   );
 });
 

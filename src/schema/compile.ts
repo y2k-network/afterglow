@@ -16,6 +16,7 @@ import {
   InternalInvariant,
   InvalidConnectionNode,
   InvalidInputFragment,
+  InvalidUnionMember,
   MissingQueryFields,
   MissingType,
   SchemaLintError,
@@ -27,6 +28,7 @@ import {
   GraphQLList,
   GraphQLNonNull,
   GraphQLObjectType,
+  GraphQLUnionType,
   type GraphQLArgumentConfig,
   type GraphQLFieldConfig,
   type GraphQLFieldConfigArgumentMap,
@@ -198,6 +200,33 @@ export function lower(ir: IR, options: LowerOptions = {}): GraphQLSchema {
       fields: () => buildObjectFields("Viewer", viewerFields, registry),
     });
     registry.set("Viewer", viewerObj);
+  }
+
+  // Pass 1.6 — unions. Built after nodes/objects/viewer so every member is
+  // already in the registry — `GraphQL.Union`'s own IR-collection step
+  // (`registerObjectCandidate` in builder.ts) guarantees a member that isn't
+  // already a Node ends up in `ir.objects`, same as any other bare
+  // Schema.Class used in output position. `resolveType` dispatches through
+  // the fragment's `resolveTypeName` (instanceof against the declared member
+  // classes — see IRUnionFragment's doc comment in ir.ts).
+  for (const [name, frag] of ir.unions) {
+    const memberTypes = frag.memberNames.map((memberName) => {
+      const member = registry.get(memberName);
+      if (!member) {
+        throw new InvalidUnionMember({ unionName: name, memberName, reason: "unregistered" });
+      }
+      if (!(member instanceof GraphQLObjectType)) {
+        throw new InvalidUnionMember({ unionName: name, memberName, reason: "not-an-object-type" });
+      }
+      return member;
+    });
+    const unionType = new GraphQLUnionType({
+      name,
+      description: frag.description,
+      types: memberTypes,
+      resolveType: (value) => Effect.succeed(frag.resolveTypeName(value)),
+    });
+    registry.set(name, unionType);
   }
 
   // Pass 1.5 — connections.

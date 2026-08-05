@@ -59,6 +59,17 @@ export interface PaginationArgs {
 }
 
 // ---------------------------------------------------------------------------
+// Union — branded by the member-instance union so field()/queryField()/etc.
+// overloads infer the resolver's result type from `GraphQL.Union(...)`
+// exactly like they do for a single `SchemaClass<T>`.
+// ---------------------------------------------------------------------------
+
+declare const UnionBrand: unique symbol;
+export interface UnionType<T> {
+  readonly [UnionBrand]: T;
+}
+
+// ---------------------------------------------------------------------------
 // Custom scalar
 // ---------------------------------------------------------------------------
 
@@ -86,6 +97,7 @@ export type FieldOutputType =
   | SchemaClass<unknown>
   | ScalarType<unknown>
   | IDMarker
+  | UnionType<unknown>
   | Schema.Top;
 
 // ---------------------------------------------------------------------------

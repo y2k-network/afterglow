@@ -10,6 +10,7 @@ export {
   Query,
   Scalar,
   Subscription,
+  Union,
   Viewer,
   deletedId,
   edgePayload,
@@ -38,4 +39,5 @@ export type {
   ScalarType,
   SchemaClass,
   SubscriptionFieldDef,
+  UnionType,
 } from "./types.ts";
