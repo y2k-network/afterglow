@@ -54,7 +54,8 @@
     "api:update": "bunx api-extractor run --local --verbose",
     "changeset": "bunx changeset",
     "version": "bunx changeset version",
-    "prepublishOnly": "bun run typecheck && bun run test && bun run build"
+    "prepublishOnly": "bun run typecheck && bun run test && bun run build",
+    "prepare": "bun run build"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
